@@ -184,7 +184,7 @@ int main()
     rfconf.tx_enable = true;
     lgw_rxrf_setconf(0, rfconf);
 
-    lgw_start();
+    lgw_start("", 512);
 
     /* initialize some variables before loop */
     memset(serial_buff, 0, sizeof serial_buff);

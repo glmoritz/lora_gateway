@@ -64,17 +64,20 @@ Maintainer: Michael Coracin
 
 
 /* result of the NMEA parsing */
-static short gps_yea = 0; /* year (2 or 4 digits) */
-static short gps_mon = 0; /* month (1-12) */
-static short gps_day = 0; /* day of the month (1-31) */
+static short gps_yea = 2019; /* year (2 or 4 digits) */
+static short gps_mon = 12; /* month (1-12) */
+static short gps_day = 1; /* day of the month (1-31) */
 static short gps_hou = 0; /* hours (0-23) */
 static short gps_min = 0; /* minutes (0-59) */
 static short gps_sec = 0; /* seconds (0-60)(60 is for leap second) */
 static float gps_fra = 0.0; /* fractions of seconds (<1) */
-static bool gps_time_ok = false;
-static int16_t gps_week = 0; /* GPS week number of the navigation epoch */
+static bool gps_time_ok = true;
+static int16_t gps_week = 32; /* GPS week number of the navigation epoch */
 static uint32_t gps_iTOW = 0; /* GPS time of week in milliseconds */
 static int32_t gps_fTOW = 0; /* Fractional part of iTOW (+/-500000) in nanosec */
+
+static int32_t labscim_systime = 1575169200; //seconds since 01/12/2019
+
 
 static short gps_dla = 0; /* degrees of latitude */
 static double gps_mla = 0.0; /* minutes of latitude */
@@ -86,7 +89,7 @@ static short gps_alt = 0; /* altitude */
 static bool gps_pos_ok = false;
 
 static char gps_mod = 'N'; /* GPS mode (N no fix, A autonomous, D differential) */
-static short gps_sat = 0; /* number of satellites used for fix */
+static short gps_sat = 5; /* number of satellites used for fix */
 
 static struct termios ttyopt_restore;
 
@@ -102,6 +105,50 @@ static bool validate_nmea_checksum(const char *serial_buff, int buff_size);
 static bool match_label(const char *s, char *label, int size, char wildcard);
 
 static int str_chop(char *s, int buff_size, char separator, int *idx_ary, int max_idx);
+
+
+/*----------------------------- LABSCIM*/
+
+uint64_t gLabscimTime;
+
+void labscim_set_time(uint64_t time)
+{
+    uint64_t diff = time - gLabscimTime;
+	gLabscimTime = time ;	
+    //TODO: max simulation time: 31 days
+    gps_fra += diff/1e6;
+    if(gps_fra>1)
+    {
+        gps_sec += (uint64_t)gps_fra;
+        gps_fra -= (uint64_t)gps_fra;
+    }
+    if(gps_sec>59)
+    {
+        gps_min += gps_sec/60;
+        gps_sec -= (gps_sec/60)*60;
+    }
+    if(gps_min>59)
+    {
+        gps_hou += gps_min/60;
+        gps_min -= (gps_min/60)*60;
+    }
+    if(gps_hou>24)
+    {
+        gps_day += gps_hou/24;
+        gps_hou -= (gps_hou/24)*24;        
+    }
+
+    gps_iTOW += diff/1000;
+    gps_fTOW += diff*1000;
+    if(gps_fTOW>1000000000)
+    {
+        gps_iTOW += gps_fTOW/1000000000;
+        gps_fTOW -= (gps_fTOW/1000000000)*1000000000;
+    }
+}
+
+
+
 
 /* -------------------------------------------------------------------------- */
 /* --- PRIVATE FUNCTIONS DEFINITION ----------------------------------------- */
@@ -264,102 +311,102 @@ int lgw_gps_enable(char *tty_path, char *gps_family, speed_t target_brate, int *
     ssize_t num_written;
 
     /* check input parameters */
-    CHECK_NULL(tty_path);
-    CHECK_NULL(fd_ptr);
+    // CHECK_NULL(tty_path);
+    // CHECK_NULL(fd_ptr);
 
-    /* open TTY device */
-    gps_tty_dev = open(tty_path, O_RDWR | O_NOCTTY);
-    if (gps_tty_dev <= 0) {
-        DEBUG_MSG("ERROR: TTY PORT FAIL TO OPEN, CHECK PATH AND ACCESS RIGHTS\n");
-        return LGW_GPS_ERROR;
-    }
-    *fd_ptr = gps_tty_dev;
+    // /* open TTY device */
+    // gps_tty_dev = open(tty_path, O_RDWR | O_NOCTTY);
+    // if (gps_tty_dev <= 0) {
+    //     DEBUG_MSG("ERROR: TTY PORT FAIL TO OPEN, CHECK PATH AND ACCESS RIGHTS\n");
+    //     return LGW_GPS_ERROR;
+    // }
+    // *fd_ptr = gps_tty_dev;
 
     /* manage the different GPS modules families */
-    if (gps_family == NULL) {
-        DEBUG_MSG("WARNING: this version of GPS module may not be supported\n");
-    } else if (strncmp(gps_family, "ubx7", 4) != 0) {
-        /* The current implementation relies on proprietary messages from U-Blox */
-        /* GPS modules (UBX, NAV-TIMEGPS...) and has only be tested with a u-blox 7. */
-        /* Those messages allow to get NATIVE GPS time (no leap seconds) required */
-        /* for class-B handling and GPS synchronization */
-        /* see lgw_parse_ubx() function for details */
-        DEBUG_MSG("WARNING: this version of GPS module may not be supported\n");
-    }
+    // if (gps_family == NULL) {
+    //     DEBUG_MSG("WARNING: this version of GPS module may not be supported\n");
+    // } else if (strncmp(gps_family, "ubx7", 4) != 0) {
+    //     /* The current implementation relies on proprietary messages from U-Blox */
+    //     /* GPS modules (UBX, NAV-TIMEGPS...) and has only be tested with a u-blox 7. */
+    //     /* Those messages allow to get NATIVE GPS time (no leap seconds) required */
+    //     /* for class-B handling and GPS synchronization */
+    //     /* see lgw_parse_ubx() function for details */
+    //     DEBUG_MSG("WARNING: this version of GPS module may not be supported\n");
+    // }
 
-    /* manage the target bitrate */
-    if (target_brate != 0) {
-        DEBUG_MSG("WARNING: target_brate parameter ignored for now\n"); // TODO
-    }
+    // /* manage the target bitrate */
+    // if (target_brate != 0) {
+    //     DEBUG_MSG("WARNING: target_brate parameter ignored for now\n"); // TODO
+    // }
 
-    /* get actual serial port configuration */
-    i = tcgetattr(gps_tty_dev, &ttyopt);
-    if (i != 0) {
-        DEBUG_MSG("ERROR: IMPOSSIBLE TO GET TTY PORT CONFIGURATION\n");
-        return LGW_GPS_ERROR;
-    }
+    // /* get actual serial port configuration */
+    // i = tcgetattr(gps_tty_dev, &ttyopt);
+    // if (i != 0) {
+    //     DEBUG_MSG("ERROR: IMPOSSIBLE TO GET TTY PORT CONFIGURATION\n");
+    //     return LGW_GPS_ERROR;
+    // }
 
-    /* Save current serial port configuration for restoring later */
-    memcpy(&ttyopt_restore, &ttyopt, sizeof ttyopt);
+    // /* Save current serial port configuration for restoring later */
+    // memcpy(&ttyopt_restore, &ttyopt, sizeof ttyopt);
 
-    /* update baudrates */
-    cfsetispeed(&ttyopt, DEFAULT_BAUDRATE);
-    cfsetospeed(&ttyopt, DEFAULT_BAUDRATE);
+    // /* update baudrates */
+    // cfsetispeed(&ttyopt, DEFAULT_BAUDRATE);
+    // cfsetospeed(&ttyopt, DEFAULT_BAUDRATE);
 
-    /* update terminal parameters */
-    /* The following configuration should allow to:
-            - Get ASCII NMEA messages
-            - Get UBX binary messages
-            - Send UBX binary commands
-        Note: as binary data have to be read/written, we need to disable
-              various character processing to avoid loosing data */
-    /* Control Modes */
-    ttyopt.c_cflag |= CLOCAL;  /* local connection, no modem control */
-    ttyopt.c_cflag |= CREAD;   /* enable receiving characters */
-    ttyopt.c_cflag |= CS8;     /* 8 bit frames */
-    ttyopt.c_cflag &= ~PARENB; /* no parity */
-    ttyopt.c_cflag &= ~CSTOPB; /* one stop bit */
-    /* Input Modes */
-    ttyopt.c_iflag |= IGNPAR;  /* ignore bytes with parity errors */
-    ttyopt.c_iflag &= ~ICRNL;  /* do not map CR to NL on input*/
-    ttyopt.c_iflag &= ~IGNCR;  /* do not ignore carriage return on input */
-    ttyopt.c_iflag &= ~IXON;   /* disable Start/Stop output control */
-    ttyopt.c_iflag &= ~IXOFF;  /* do not send Start/Stop characters */
-    /* Output Modes */
-    ttyopt.c_oflag = 0;        /* disable everything on output as we only write binary */
-    /* Local Modes */
-    ttyopt.c_lflag &= ~ICANON; /* disable canonical input - cannot use with binary input */
-    ttyopt.c_lflag &= ~ISIG;   /* disable check for INTR, QUIT, SUSP special characters */
-    ttyopt.c_lflag &= ~IEXTEN; /* disable any special control character */
-    ttyopt.c_lflag &= ~ECHO;   /* do not echo back every character typed */
-    ttyopt.c_lflag &= ~ECHOE;  /* does not erase the last character in current line */
-    ttyopt.c_lflag &= ~ECHOK;  /* do not echo NL after KILL character */
+    // /* update terminal parameters */
+    // /* The following configuration should allow to:
+    //         - Get ASCII NMEA messages
+    //         - Get UBX binary messages
+    //         - Send UBX binary commands
+    //     Note: as binary data have to be read/written, we need to disable
+    //           various character processing to avoid loosing data */
+    // /* Control Modes */
+    // ttyopt.c_cflag |= CLOCAL;  /* local connection, no modem control */
+    // ttyopt.c_cflag |= CREAD;   /* enable receiving characters */
+    // ttyopt.c_cflag |= CS8;     /* 8 bit frames */
+    // ttyopt.c_cflag &= ~PARENB; /* no parity */
+    // ttyopt.c_cflag &= ~CSTOPB; /* one stop bit */
+    // /* Input Modes */
+    // ttyopt.c_iflag |= IGNPAR;  /* ignore bytes with parity errors */
+    // ttyopt.c_iflag &= ~ICRNL;  /* do not map CR to NL on input*/
+    // ttyopt.c_iflag &= ~IGNCR;  /* do not ignore carriage return on input */
+    // ttyopt.c_iflag &= ~IXON;   /* disable Start/Stop output control */
+    // ttyopt.c_iflag &= ~IXOFF;  /* do not send Start/Stop characters */
+    // /* Output Modes */
+    // ttyopt.c_oflag = 0;        /* disable everything on output as we only write binary */
+    // /* Local Modes */
+    // ttyopt.c_lflag &= ~ICANON; /* disable canonical input - cannot use with binary input */
+    // ttyopt.c_lflag &= ~ISIG;   /* disable check for INTR, QUIT, SUSP special characters */
+    // ttyopt.c_lflag &= ~IEXTEN; /* disable any special control character */
+    // ttyopt.c_lflag &= ~ECHO;   /* do not echo back every character typed */
+    // ttyopt.c_lflag &= ~ECHOE;  /* does not erase the last character in current line */
+    // ttyopt.c_lflag &= ~ECHOK;  /* do not echo NL after KILL character */
 
-    /* settings for non-canonical mode
-       read will block for until the lesser of VMIN or requested chars have been received */
-    ttyopt.c_cc[VMIN]  = LGW_GPS_MIN_MSG_SIZE;
-    ttyopt.c_cc[VTIME] = 0;
+    // /* settings for non-canonical mode
+    //    read will block for until the lesser of VMIN or requested chars have been received */
+    // ttyopt.c_cc[VMIN]  = LGW_GPS_MIN_MSG_SIZE;
+    // ttyopt.c_cc[VTIME] = 0;
 
-    /* set new serial ports parameters */
-    i = tcsetattr(gps_tty_dev, TCSANOW, &ttyopt);
-    if (i != 0){
-        DEBUG_MSG("ERROR: IMPOSSIBLE TO UPDATE TTY PORT CONFIGURATION\n");
-        return LGW_GPS_ERROR;
-    }
-    tcflush(gps_tty_dev, TCIOFLUSH);
+    // /* set new serial ports parameters */
+    // i = tcsetattr(gps_tty_dev, TCSANOW, &ttyopt);
+    // if (i != 0){
+    //     DEBUG_MSG("ERROR: IMPOSSIBLE TO UPDATE TTY PORT CONFIGURATION\n");
+    //     return LGW_GPS_ERROR;
+    // }
+    // tcflush(gps_tty_dev, TCIOFLUSH);
 
-    /* Send UBX CFG NAV-TIMEGPS message to tell GPS module to output native GPS time */
-    /* This is a binary message, serial port has to be properly configured to handle this */
-    num_written = write (gps_tty_dev, ubx_cmd_timegps, UBX_MSG_NAVTIMEGPS_LEN);
-    if (num_written != UBX_MSG_NAVTIMEGPS_LEN) {
-        DEBUG_MSG("ERROR: Failed to write on serial port (written=%d)\n", (int) num_written);
-    }
+    // /* Send UBX CFG NAV-TIMEGPS message to tell GPS module to output native GPS time */
+    // /* This is a binary message, serial port has to be properly configured to handle this */
+    // num_written = write (gps_tty_dev, ubx_cmd_timegps, UBX_MSG_NAVTIMEGPS_LEN);
+    // if (num_written != UBX_MSG_NAVTIMEGPS_LEN) {
+    //     DEBUG_MSG("ERROR: Failed to write on serial port (written=%d)\n", (int) num_written);
+    // }
 
-    /* get timezone info */
+    // /* get timezone info */
     tzset();
 
     /* initialize global variables */
-    gps_time_ok = false;
+    gps_time_ok = true;
     gps_pos_ok = false;
     gps_mod = 'N';
 
@@ -662,72 +709,73 @@ int lgw_gps_get(struct timespec *utc, struct timespec *gps_time, struct coord_s 
 /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
 int lgw_gps_sync(struct tref *ref, uint32_t count_us, struct timespec utc, struct timespec gps_time) {
-    double cnt_diff; /* internal concentrator time difference (in seconds) */
-    double utc_diff; /* UTC time difference (in seconds) */
-    double slope; /* time slope between new reference and old reference (for sanity check) */
+    //double cnt_diff; /* internal concentrator time difference (in seconds) */
+    //double utc_diff; /* UTC time difference (in seconds) */
+    //double slope; /* time slope between new reference and old reference (for sanity check) */
 
-    bool aber_n0; /* is the update value for synchronization aberrant or not ? */
-    static bool aber_min1 = false; /* keep track of whether value at sync N-1 was aberrant or not  */
-    static bool aber_min2 = false; /* keep track of whether value at sync N-2 was aberrant or not  */
+    //bool aber_n0; /* is the update value for synchronization aberrant or not ? */
+    //static bool aber_min1 = false; /* keep track of whether value at sync N-1 was aberrant or not  */
+    //static bool aber_min2 = false; /* keep track of whether value at sync N-2 was aberrant or not  */
 
-    CHECK_NULL(ref);
+    //CHECK_NULL(ref);
 
     /* calculate the slope */
 
-    cnt_diff = (double)(count_us - ref->count_us) / (double)(TS_CPS); /* uncorrected by xtal_err */
-    utc_diff = (double)(utc.tv_sec - (ref->utc).tv_sec) + (1E-9 * (double)(utc.tv_nsec - (ref->utc).tv_nsec));
+    //cnt_diff = (double)(count_us - ref->count_us) / (double)(TS_CPS); /* uncorrected by xtal_err */
+    //utc_diff = (double)(utc.tv_sec - (ref->utc).tv_sec) + (1E-9 * (double)(utc.tv_nsec - (ref->utc).tv_nsec));
 
     /* detect aberrant points by measuring if slope limits are exceeded */
-    if (utc_diff != 0) { // prevent divide by zero
-        slope = cnt_diff/utc_diff;
-        if ((slope > PLUS_10PPM) || (slope < MINUS_10PPM)) {
-            DEBUG_MSG("Warning: correction range exceeded\n");
-            aber_n0 = true;
-        } else {
-            aber_n0 = false;
-        }
-    } else {
-        DEBUG_MSG("Warning: aberrant UTC value for synchronization\n");
-        aber_n0 = true;
-    }
+    //if (utc_diff != 0) { // prevent divide by zero
+    //    slope = cnt_diff/utc_diff;
+    //    if ((slope > PLUS_10PPM) || (slope < MINUS_10PPM)) {
+    //        DEBUG_MSG("Warning: correction range exceeded\n");
+    //        aber_n0 = true;
+    //    } else {
+    //        aber_n0 = false;
+    //    }
+    //} else {
+    //    DEBUG_MSG("Warning: aberrant UTC value for synchronization\n");
+    //    aber_n0 = true;
+    //}
 
     /* watch if the 3 latest sync point were aberrant or not */
-    if (aber_n0 == false) {
+    //if (aber_n0 == false) {
         /* value no aberrant -> sync with smoothed slope */
-        ref->systime = time(NULL);
+        ref->systime = labscim_systime + gLabscimTime/1000000;
         ref->count_us = count_us;
         ref->utc.tv_sec = utc.tv_sec;
         ref->utc.tv_nsec = utc.tv_nsec;
         ref->gps.tv_sec = gps_time.tv_sec;
         ref->gps.tv_nsec = gps_time.tv_nsec;
-        ref->xtal_err = slope;
-        aber_min2 = aber_min1;
-        aber_min1 = aber_n0;
+        //ref->xtal_err = slope;
+        ref->xtal_err = 1.0;
+        //aber_min2 = aber_min1;
+        //aber_min1 = aber_n0;
         return LGW_GPS_SUCCESS;
-    } else if (aber_n0 && aber_min1 && aber_min2) {
-        /* 3 successive aberrant values -> sync reset (keep xtal_err) */
-        ref->systime = time(NULL);
-        ref->count_us = count_us;
-        ref->utc.tv_sec = utc.tv_sec;
-        ref->utc.tv_nsec = utc.tv_nsec;
-        ref->gps.tv_sec = gps_time.tv_sec;
-        ref->gps.tv_nsec = gps_time.tv_nsec;
-        /* reset xtal_err only if the present value is out of range */
-        if ((ref->xtal_err > PLUS_10PPM) || (ref->xtal_err < MINUS_10PPM)) {
-            ref->xtal_err = 1.0;
-        }
-        DEBUG_MSG("Warning: 3 successive aberrant sync attempts, sync reset\n");
-        aber_min2 = aber_min1;
-        aber_min1 = aber_n0;
-        return LGW_GPS_SUCCESS;
-    } else {
-        /* only 1 or 2 successive aberrant values -> ignore and return an error */
-        aber_min2 = aber_min1;
-        aber_min1 = aber_n0;
-        return LGW_GPS_ERROR;
-    }
+    //} else if (aber_n0 && aber_min1 && aber_min2) {
+    //    /* 3 successive aberrant values -> sync reset (keep xtal_err) */
+    //   ref->systime = time(NULL);
+    //     ref->count_us = count_us;
+    //     ref->utc.tv_sec = utc.tv_sec;
+    //     ref->utc.tv_nsec = utc.tv_nsec;
+    //     ref->gps.tv_sec = gps_time.tv_sec;
+    //     ref->gps.tv_nsec = gps_time.tv_nsec;
+    //     /* reset xtal_err only if the present value is out of range */
+    //     if ((ref->xtal_err > PLUS_10PPM) || (ref->xtal_err < MINUS_10PPM)) {
+    //         ref->xtal_err = 1.0;
+    //     }
+    //     DEBUG_MSG("Warning: 3 successive aberrant sync attempts, sync reset\n");
+    //     aber_min2 = aber_min1;
+    //     aber_min1 = aber_n0;
+    //     return LGW_GPS_SUCCESS;
+    // } else {
+    //     /* only 1 or 2 successive aberrant values -> ignore and return an error */
+    //     aber_min2 = aber_min1;
+    //     aber_min1 = aber_n0;
+    //     return LGW_GPS_ERROR;
+    // }
 
-    return LGW_GPS_SUCCESS;
+    //return LGW_GPS_SUCCESS;
 }
 
 /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
