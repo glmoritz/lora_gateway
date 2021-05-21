@@ -15,7 +15,7 @@ buffer_circ_t *gNodeInputBuffer;
 buffer_circ_t *gNodeOutputBuffer;
 uint8_t* gNodeName;
 uint8_t* gServerAddress;
-uint64_t gIsMaster;
+uint64_t gCommandLabscimLog;
 uint64_t gServerPort;
 uint64_t gBufferSize;
 uint32_t gBootReceived=0;
@@ -35,11 +35,11 @@ void labscim_set_time(uint64_t time);
 
 void labscim_protocol_boot(struct labscim_protocol_boot* msg)
 {
-	struct lora_gateway_setup* cns = (struct loramac_node_setup*)msg->message;
+	struct lora_gateway_setup* cns = (struct lora_gateway_setup*)msg->message;
 	memcpy((void*)mac_addr,(void*)cns->mac_addr,sizeof(uint8_t)*8);
 	labscim_set_time(cns->startup_time);
 	gBootReceived = 1;
-    gIsMaster = cns->IsMaster;
+    gCommandLabscimLog = cns->labscim_log_master;
 	free(msg);
 	return;
 }
@@ -69,7 +69,16 @@ int socket_process_command(struct labscim_protocol_header *hdr)
 #endif        
         labscim_set_time(((struct labscim_time_event *)(hdr))->current_time_us);
         labscim_ll_insert_at_back(&gThreadCommands,(void*)hdr);  
-        break;      
+        break;
+    }
+    case LABSCIM_SIGNAL_REGISTER_RESPONSE:
+    {
+#ifdef LABSCIM_LOG_COMMANDS
+        sprintf(log, "seq%4d\tSIGNAL_REGISTER_RESPONSE\n", hdr->sequence_number);
+        labscim_log(log, "pro ");
+#endif        
+        labscim_ll_insert_at_back(&gThreadCommands, (void *)hdr);
+        break;
     }
     case LABSCIM_RADIO_RESPONSE:
     {

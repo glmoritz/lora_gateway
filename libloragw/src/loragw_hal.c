@@ -20,6 +20,7 @@ Maintainer: Sylvain Miermont
 #include <stdbool.h> /* bool type */
 #include <stdio.h>   /* printf fprintf */
 #include <string.h>  /* memcpy */
+
 #include <sys/time.h>
 #include <math.h>    /* pow, cell */
 
@@ -40,9 +41,37 @@ LABSCIM
 #include "labscim_socket.h"
 #include "labscim_platform_socket.h"
 #include "labscim-lora-radio-protocol.h"
+#include "base64.h"
+#include "parson.h"
+#include "labscim_helper.h"
 
 extern uint64_t gLabscimTime;
+extern uint64_t gCommandLabscimLog;
 extern uint8_t mac_addr[];
+
+/*LabSCim MQTT result collector*/
+#include "MQTTClient.h"
+
+#define ADDRESS     "192.168.100.105"
+#define CLIENTID    "LabSCim gateway"
+#define TOPIC       "application/1/device/#"
+#define QOS         1
+#define TIMEOUT     10000L
+
+uint64_t gPacketGeneratedSignal;
+uint64_t gPacketLatencySignal;
+uint64_t gPacketErrorSignal;
+
+pthread_mutex_t gEmitListMutex = PTHREAD_MUTEX_INITIALIZER;
+struct labscim_ll gEmitSignalList;
+
+volatile MQTTClient_deliveryToken deliveredtoken;
+
+
+volatile bool lib_exit_sig = false; /* 1 -> application terminates cleanly (shut down hardware, close open files, etc) */
+volatile bool lib_quit_sig = false;
+
+
 /* -------------------------------------------------------------------------- */
 /* --- PRIVATE MACROS ------------------------------------------------------- */
 
@@ -191,6 +220,22 @@ int32_t lgw_bw_getval(int x);
 
 /* -------------------------------------------------------------------------- */
 /* --- PRIVATE FUNCTIONS DEFINITION ----------------------------------------- */
+
+void EmitAndYield()
+{
+    struct signal_emit* em;
+    pthread_mutex_lock(&gEmitListMutex);
+    em = labscim_ll_pop_front(&gEmitSignalList);
+    while(em!=NULL)
+    {
+        LabscimSignalEmit(em->id,em->value);
+        free(em);
+        em = labscim_ll_pop_front(&gEmitSignalList);
+    }
+    pthread_mutex_unlock(&gEmitListMutex);
+    protocol_yield(gNodeOutputBuffer);
+}
+
 
 /* size is the firmware size in bytes (not 14b words) */
 int load_firmware(uint8_t target, uint8_t *firmware, uint16_t size)
@@ -801,6 +846,7 @@ int lgw_txgain_setconf(struct lgw_tx_gain_lut_s *conf)
 /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
 pthread_t gThridIf;
+pthread_t gThridMQTT;
 
 
 pthread_mutex_t gWaitingCommandsMutex = PTHREAD_MUTEX_INITIALIZER;
@@ -827,7 +873,7 @@ void lgw_labscim_sleep(uint64_t ms, uint64_t yield)
     uint32_t seq_no = set_time_event(gNodeOutputBuffer, 0, ctrue, ms * 1000);        
     if(yield)
     {
-        protocol_yield(gNodeOutputBuffer);
+        EmitAndYield();        
     }
     pthread_mutex_lock(&gWaitingCommandsMutex);        
     while (waiting)
@@ -854,12 +900,198 @@ void lgw_labscim_sleep(uint64_t ms, uint64_t yield)
     pthread_mutex_unlock(&gWaitingCommandsMutex);
 }
 
+/* -------------------------------------------------------------------------- */
+/* --- THREAD 6: LabSCim - Send statistics back to Omnet++ --------- */
+
+MQTTClient gMQTTClient;
+
+void mqtt_delivered(void *context, MQTTClient_deliveryToken dt)
+{
+    printf("Message with token value %d delivery confirmed\n", dt);
+    deliveredtoken = dt;
+}
+
+int mqtt_msgarrvd(void *context, char *topicName, int topicLen, MQTTClient_message *message)
+{
+    JSON_Value *root_val;
+    JSON_Array *fields;
+    JSON_Object *obj = NULL;
+    JSON_Value *val = NULL; /* needed to detect the absence of some fields */
+    const char *str; /* pointer to sub-strings in the JSON data */
+    unsigned long long ull = 0;
+
+    /* try to parse JSON */    
+
+    const char s[2] = "/";
+    const max_topics = 8;
+    char *token[max_topics];
+    uint8_t payload[255];
+    uint8_t enc_payload[255];
+    uint8_t return_topic[255];
+    int8_t* data;
+    uint32_t i;
+    struct signal_emit* sig;
+
+    MQTTClient_message pubmsg = MQTTClient_message_initializer;
+    MQTTClient_deliveryToken tk;
+    
+    printf("Message arrived\n");
+    printf("   topic: %s\n", topicName);
+    printf("   message: %.*s\n", message->payloadlen, (char*)message->payload);   
+   
+   /* walk through other tokens */
+   i = 0;
+   token[0] = strtok(topicName, s);
+   while(( token[i] != NULL )&&(i<max_topics))
+   {
+       i++;
+       token[i] = strtok(NULL, s);       
+   }
+   
+
+   if (strcmp("error", token[5])==0)
+   {
+       root_val = json_parse_string_with_comments(message->payload);
+       if (root_val != NULL)
+       {
+           obj = json_value_get_object(root_val);
+           data = json_object_get_string(obj, "error");
+           if (data != NULL)
+           {               
+               sig = (struct signal_emit *)malloc(sizeof(struct signal_emit));
+               sig->id = gPacketErrorSignal;
+               sig->value = data[0];
+               pthread_mutex_lock(&gEmitListMutex);
+               labscim_ll_insert_at_back(&gEmitSignalList, (void *)sig);
+               pthread_mutex_unlock(&gEmitListMutex);
+           }
+       }
+   }
+
+   if(strcmp("up",token[5])==0)
+   {
+       root_val = json_parse_string_with_comments(message->payload);
+       if (root_val != NULL)
+       {
+           obj = json_value_get_object(root_val);                                 
+           data = json_object_get_string(obj, "data");
+           if (data != NULL)
+           {               
+               b64_to_bin(data, strlen(data), payload, 255);               
+               uint64_t *values = (uint64_t *)payload;
+               sig = (struct signal_emit*)malloc(sizeof(struct signal_emit));
+               sig->id = gPacketLatencySignal;
+               sig->value = (gLabscimTime - values[1])/1e6;
+               pthread_mutex_lock(&gEmitListMutex);
+               labscim_ll_insert_at_back(&gEmitSignalList,(void*)sig);
+               pthread_mutex_unlock(&gEmitListMutex);               
+               values[2] = gLabscimTime;               
+               bin_to_b64(payload,sizeof(uint64_t)*3,enc_payload,255);
+               sprintf(payload,"{\"confirmed\": false, \"fPort\": 2, \"data\": \"%s\"}",enc_payload);
+               pubmsg.payload = payload;
+               pubmsg.payloadlen = strlen(payload);
+               pubmsg.qos = QOS;
+               pubmsg.retained = 0;
+               //application/[ApplicationID]/device/[DevEUI]/command/down
+               sprintf(return_topic,"application/%s/%s/%s/command/down",token[1],token[2],token[3]);               
+               MQTTClient_publishMessage(gMQTTClient, return_topic, &pubmsg, &tk);     
+               sig = (struct signal_emit*)malloc(sizeof(struct signal_emit));
+               sig->id = gPacketGeneratedSignal;
+               sig->value = gLabscimTime/1e6;
+               pthread_mutex_lock(&gEmitListMutex);
+               labscim_ll_insert_at_back(&gEmitSignalList,(void*)sig);
+               pthread_mutex_unlock(&gEmitListMutex);
+
+               //MQTTClient_waitForCompletion(gMQTTClient, tk, TIMEOUT);
+           }
+       }
+   }
+
+    MQTTClient_freeMessage(&message);
+    MQTTClient_free(topicName);
+    return 1;
+}
+
+void mqtt_connlost(void *context, char *cause)
+{
+    printf("\nConnection lost\n");
+    printf("     cause: %s\n", cause);
+}
+
+
+
+void thread_labscim_mqtt(void) 
+{    
+    MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
+    int rc;
+    labscim_ll_init_list(&gEmitSignalList);
+
+    if ((rc = MQTTClient_create(&gMQTTClient, ADDRESS, CLIENTID,
+                                MQTTCLIENT_PERSISTENCE_NONE, NULL)) != MQTTCLIENT_SUCCESS)
+    {
+        printf("Failed to create client, return code %d\n", rc);
+        rc = EXIT_FAILURE;
+        goto exit;
+    }
+
+    if ((rc = MQTTClient_setCallbacks(gMQTTClient, NULL, mqtt_connlost, mqtt_msgarrvd, mqtt_delivered)) != MQTTCLIENT_SUCCESS)
+    {
+        printf("Failed to set callbacks, return code %d\n", rc);
+        rc = EXIT_FAILURE;
+        goto destroy_exit;
+    }
+
+    conn_opts.keepAliveInterval = 10;
+    conn_opts.cleansession = 1;
+    conn_opts.maxInflightMessages = 30;
+    conn_opts.reliable = false;    
+    if ((rc = MQTTClient_connect(gMQTTClient, &conn_opts)) != MQTTCLIENT_SUCCESS)
+    {
+        printf("Failed to connect, return code %d\n", rc);
+        rc = EXIT_FAILURE;
+        goto destroy_exit;
+    }
+
+    printf("Subscribing to topic %s\nfor client %s using QoS%d\n\n", TOPIC, CLIENTID, QOS);
+    if ((rc = MQTTClient_subscribe(gMQTTClient, TOPIC, QOS)) != MQTTCLIENT_SUCCESS)
+    {
+        printf("Failed to subscribe, return code %d\n", rc);
+        rc = EXIT_FAILURE;
+    }
+    else
+    {
+        int ch;
+        /* main loop task */
+        while (!lib_exit_sig && !lib_quit_sig) 
+        {
+            wait_ms(500);
+        }
+
+        if ((rc = MQTTClient_unsubscribe(gMQTTClient, TOPIC)) != MQTTCLIENT_SUCCESS)
+        {
+            printf("Failed to unsubscribe, return code %d\n", rc);
+            rc = EXIT_FAILURE;
+        }
+    }
+
+    if ((rc = MQTTClient_disconnect(gMQTTClient, 10000)) != MQTTCLIENT_SUCCESS)
+    {
+        printf("Failed to disconnect, return code %d\n", rc);
+        rc = EXIT_FAILURE;
+    }
+destroy_exit:
+    MQTTClient_destroy(&gMQTTClient);
+exit:
+    printf("\nINFO: End of validation thread\n");
+    return rc;
+}
 
 void labscim_interface_thread(void) 
 {
     uint64_t ret;
-    labscim_ll_init_list(&gReceivedPackets);
-    while (1)
+    labscim_ll_init_list(&gReceivedPackets);    
+    
+    while (!lib_exit_sig && !lib_quit_sig) 
     {     
         pthread_mutex_lock(gNodeInputBuffer->mutex.mutex);                
         labscim_socket_handle_input(gNodeInputBuffer, &gCommands);        
@@ -893,11 +1125,14 @@ void labscim_interface_thread(void)
         } 
         else 
         {
-            protocol_yield(gNodeOutputBuffer);
+            EmitAndYield();            
         }
         pthread_mutex_unlock(&gWaitingCommandsMutex);
     }
 }
+
+
+
 
 void labscim_radio_incoming_response(struct labscim_radio_response *cmd)
 {
@@ -928,11 +1163,15 @@ void lgw_labscim_get_time(struct timeval *time)
 
 int lgw_start(uint8_t* NodeName, uint32_t BufferSize, uint64_t* GatewayMac)
 {
-    int i;
+    int i;    
+
     if (lgw_is_started == true)
     {
         DEBUG_MSG("Note: LoRa concentrator already started, restarting it now\n");
     }
+
+    lib_exit_sig = false;
+    lib_quit_sig = false;
 
     uint8_t *inbuffername, *outbuffername;
     inbuffername = (uint8_t *)malloc(sizeof(uint8_t) * strlen(NodeName) + 4);
@@ -999,7 +1238,11 @@ int lgw_start(uint8_t* NodeName, uint32_t BufferSize, uint64_t* GatewayMac)
         pthread_mutex_unlock(&gWaitingCommandsMutex);
         lgw_process_all_commands();
     }
-    *GatewayMac = *((uint64_t*)mac_addr);
+    *GatewayMac = *((uint64_t*)mac_addr);   
+
+
+
+    
     i = pthread_create(&gThridIf, NULL, (void *(*)(void *))labscim_interface_thread, NULL);
     if (i != 0)
     {
@@ -1007,6 +1250,22 @@ int lgw_start(uint8_t* NodeName, uint32_t BufferSize, uint64_t* GatewayMac)
         return LGW_HAL_ERROR;
     }
     lgw_is_started = true;
+
+    if (gCommandLabscimLog)
+    {
+		gPacketGeneratedSignal = LabscimSignalRegister("DownstreamPacketGenerated");
+		gPacketLatencySignal = LabscimSignalRegister("UpstreamPacketLatency");
+        gPacketErrorSignal = LabscimSignalRegister("UpstreamPacketError");
+
+        i = pthread_create(&gThridMQTT, NULL, (void *(*)(void *))thread_labscim_mqtt, NULL);
+        if (i != 0)
+        {
+            DEBUG_MSG("ERROR: [main] impossible to labscim mqtt thread\n");
+            exit(EXIT_FAILURE);
+        }
+    } 
+
+
     //
     int64_t max_freq=rf_rx_freq[(uint8_t)if_rf_chain[0]] + if_freq[0];
     int64_t min_freq=rf_rx_freq[(uint8_t)if_rf_chain[0]] + if_freq[0];
@@ -1058,6 +1317,8 @@ int lgw_stop(void)
 {
     lgw_soft_reset();
     lgw_disconnect();
+    lib_exit_sig = true;
+    lib_quit_sig = true;
 
     lgw_is_started = false;
     return LGW_HAL_SUCCESS;

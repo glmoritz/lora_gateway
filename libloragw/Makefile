@@ -17,7 +17,7 @@ INCLUDES = $(wildcard inc/*.h)
 
 ### linking options
 
-LIBS := -lloragw -lrt -lm
+LIBS := -lloragw -lrt -lm -llibpaho-mqtt3c
 
 ### general build targets
 
@@ -68,7 +68,7 @@ $(OBJDIR)/loragw_hal.o: src/loragw_hal.c $(INCLUDES) src/arb_fw.var src/agc_fw.v
 
 ### static library
 
-libloragw.a: $(OBJDIR)/labscim_linked_list.o $(OBJDIR)/labscim_platform_socket.o $(OBJDIR)/labscim_socket.o $(OBJDIR)/shared_mutex.o $(OBJDIR)/loragw_hal.o $(OBJDIR)/loragw_gps.o $(OBJDIR)/loragw_reg.o $(OBJDIR)/loragw_spi.o $(OBJDIR)/loragw_aux.o $(OBJDIR)/loragw_radio.o $(OBJDIR)/loragw_fpga.o $(OBJDIR)/loragw_lbt.o
+libloragw.a: $(OBJDIR)/labscim_linked_list.o $(OBJDIR)/labscim_helper.o $(OBJDIR)/labscim_platform_socket.o $(OBJDIR)/labscim_socket.o $(OBJDIR)/shared_mutex.o $(OBJDIR)/loragw_hal.o $(OBJDIR)/loragw_gps.o $(OBJDIR)/loragw_reg.o $(OBJDIR)/loragw_spi.o $(OBJDIR)/loragw_aux.o $(OBJDIR)/loragw_radio.o $(OBJDIR)/loragw_fpga.o $(OBJDIR)/loragw_lbt.o
 	$(AR) rcs $@ $^
 
 ### test programs

@@ -4,6 +4,9 @@
         "stdbool.h": "c",
         "labscim-lora-radio-protocol.h": "c",
         "sx126x_labscim.h": "c",
-        "omnet_radio_mode.h": "c"
+        "omnet_radio_mode.h": "c",
+        "signal.h": "c",
+        "loragw_reg.h": "c",
+        "labscim_helper.h": "c"
     }
 }
