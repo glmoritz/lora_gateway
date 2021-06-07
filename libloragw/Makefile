@@ -17,7 +17,7 @@ INCLUDES = $(wildcard inc/*.h)
 
 ### linking options
 
-LIBS := -lloragw -lrt -lm -llibpaho-mqtt3c
+LIBS := -lloragw -lrt -lm -lpaho-mqtt3a
 
 ### general build targets
 

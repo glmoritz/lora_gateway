@@ -50,7 +50,17 @@ extern uint64_t gCommandLabscimLog;
 extern uint8_t mac_addr[];
 
 /*LabSCim MQTT result collector*/
-#include "MQTTClient.h"
+#include "MQTTAsync.h"
+
+void mqtt_onSubscribeFailure(void* context, MQTTAsync_failureData* response);
+void mqtt_onSubscribe(void* context, MQTTAsync_successData* response);
+void mqtt_onDisconnect(void* context, MQTTAsync_successData* response);
+void mqtt_onConnectFailure(void* context, MQTTAsync_failureData* response);
+void mqtt_connlost(void *context, char *cause);
+int mqtt_msgarrvd(void *context, char *topicName, int topicLen, MQTTAsync_message *message);
+void mqtt_onSend(void* context, MQTTAsync_successData* response);
+void mqtt_onConnect(void* context, MQTTAsync_successData* response);
+
 
 #define ADDRESS     "192.168.100.105"
 #define CLIENTID    "LabSCim gateway"
@@ -65,7 +75,7 @@ uint64_t gPacketErrorSignal;
 pthread_mutex_t gEmitListMutex = PTHREAD_MUTEX_INITIALIZER;
 struct labscim_ll gEmitSignalList;
 
-volatile MQTTClient_deliveryToken deliveredtoken;
+
 
 
 volatile bool lib_exit_sig = false; /* 1 -> application terminates cleanly (shut down hardware, close open files, etc) */
@@ -902,16 +912,41 @@ void lgw_labscim_sleep(uint64_t ms, uint64_t yield)
 
 /* -------------------------------------------------------------------------- */
 /* --- THREAD 6: LabSCim - Send statistics back to Omnet++ --------- */
+volatile MQTTAsync_token deliveredtoken;
 
-MQTTClient gMQTTClient;
+volatile uint32_t finished = 0;
+volatile uint32_t subscribed = 0;
 
-void mqtt_delivered(void *context, MQTTClient_deliveryToken dt)
+void mqtt_onConnect(void* context, MQTTAsync_successData* response)
 {
-    printf("Message with token value %d delivery confirmed\n", dt);
-    deliveredtoken = dt;
+        MQTTAsync client = (MQTTAsync)context;
+        MQTTAsync_responseOptions opts = MQTTAsync_responseOptions_initializer;
+        
+        int rc;
+        printf("Successful connection\n");
+
+        printf("Subscribing to topic %s\nfor client %s using QoS%d\n\n", TOPIC, CLIENTID, QOS);
+        
+        opts.onSuccess = mqtt_onSubscribe;
+        opts.onFailure = mqtt_onSubscribeFailure;
+        opts.context = client;
+
+        deliveredtoken = 0;
+        finished = 0;
+        subscribed = 0;
+        if ((rc = MQTTAsync_subscribe(client, TOPIC, QOS, &opts)) != MQTTASYNC_SUCCESS)
+        {
+            printf("Failed to start subscribe, return code %d\n", rc);
+            exit(EXIT_FAILURE);
+        }
 }
 
-int mqtt_msgarrvd(void *context, char *topicName, int topicLen, MQTTClient_message *message)
+void mqtt_onSend(void* context, MQTTAsync_successData* response)
+{
+    printf("Message with token value %d delivery confirmed\n", response->token);
+}
+
+int mqtt_msgarrvd(void *context, char *topicName, int topicLen, MQTTAsync_message *message)
 {
     JSON_Value *root_val;
     JSON_Array *fields;
@@ -919,6 +954,11 @@ int mqtt_msgarrvd(void *context, char *topicName, int topicLen, MQTTClient_messa
     JSON_Value *val = NULL; /* needed to detect the absence of some fields */
     const char *str; /* pointer to sub-strings in the JSON data */
     unsigned long long ull = 0;
+
+    MQTTAsync client = (MQTTAsync)context;
+    MQTTAsync_responseOptions opts = MQTTAsync_responseOptions_initializer;
+    MQTTAsync_message pubmsg = MQTTAsync_message_initializer;
+    int rc;
 
     /* try to parse JSON */    
 
@@ -931,9 +971,6 @@ int mqtt_msgarrvd(void *context, char *topicName, int topicLen, MQTTClient_messa
     int8_t* data;
     uint32_t i;
     struct signal_emit* sig;
-
-    MQTTClient_message pubmsg = MQTTClient_message_initializer;
-    MQTTClient_deliveryToken tk;
     
     printf("Message arrived\n");
     printf("   topic: %s\n", topicName);
@@ -984,103 +1021,129 @@ int mqtt_msgarrvd(void *context, char *topicName, int topicLen, MQTTClient_messa
                sig->value = (gLabscimTime - values[1])/1e6;
                pthread_mutex_lock(&gEmitListMutex);
                labscim_ll_insert_at_back(&gEmitSignalList,(void*)sig);
-               pthread_mutex_unlock(&gEmitListMutex);               
-               values[2] = gLabscimTime;               
-               bin_to_b64(payload,sizeof(uint64_t)*3,enc_payload,255);
-               sprintf(payload,"{\"confirmed\": false, \"fPort\": 2, \"data\": \"%s\"}",enc_payload);
-               pubmsg.payload = payload;
-               pubmsg.payloadlen = strlen(payload);
-               pubmsg.qos = QOS;
-               pubmsg.retained = 0;
-               //application/[ApplicationID]/device/[DevEUI]/command/down
-               sprintf(return_topic,"application/%s/%s/%s/command/down",token[1],token[2],token[3]);               
-               MQTTClient_publishMessage(gMQTTClient, return_topic, &pubmsg, &tk);     
-               sig = (struct signal_emit*)malloc(sizeof(struct signal_emit));
-               sig->id = gPacketGeneratedSignal;
-               sig->value = gLabscimTime/1e6;
-               pthread_mutex_lock(&gEmitListMutex);
-               labscim_ll_insert_at_back(&gEmitSignalList,(void*)sig);
                pthread_mutex_unlock(&gEmitListMutex);
-
-               //MQTTClient_waitForCompletion(gMQTTClient, tk, TIMEOUT);
+               if (client != NULL)
+               {
+                   values[2] = gLabscimTime;
+                   bin_to_b64(payload, sizeof(uint64_t) * 3, enc_payload, 255);
+                   sprintf(payload, "{\"confirmed\": false, \"fPort\": 2, \"data\": \"%s\"}", enc_payload);
+                   opts.onSuccess = mqtt_onSend;
+                   opts.context = client;
+                   pubmsg.payload = payload;
+                   pubmsg.payloadlen = strlen(payload);
+                   pubmsg.qos = QOS;
+                   pubmsg.retained = 0;
+                   deliveredtoken = 0;
+                   //application/[ApplicationID]/device/[DevEUI]/command/down
+                   sprintf(return_topic, "application/%s/%s/%s/command/down", token[1], token[2], token[3]);
+                   if ((rc = MQTTAsync_sendMessage(client, return_topic, &pubmsg, &opts)) != MQTTASYNC_SUCCESS)
+                   {
+                       printf("Failed to start sendMessage, return code %d\n", rc);
+                       exit(EXIT_FAILURE);
+                   }
+                   sig = (struct signal_emit *)malloc(sizeof(struct signal_emit));
+                   sig->id = gPacketGeneratedSignal;
+                   sig->value = gLabscimTime / 1e6;
+                   pthread_mutex_lock(&gEmitListMutex);
+                   labscim_ll_insert_at_back(&gEmitSignalList, (void *)sig);
+                   pthread_mutex_unlock(&gEmitListMutex);
+               }
            }
        }
    }
-
-    MQTTClient_freeMessage(&message);
-    MQTTClient_free(topicName);
+    MQTTAsync_freeMessage(&message);
+    MQTTAsync_free(topicName);
     return 1;
 }
 
 void mqtt_connlost(void *context, char *cause)
 {
+    MQTTAsync client = (MQTTAsync)context;
+    MQTTAsync_connectOptions conn_opts = MQTTAsync_connectOptions_initializer;
+    int rc;
     printf("\nConnection lost\n");
     printf("     cause: %s\n", cause);
+    printf("Reconnecting\n");
+    conn_opts.keepAliveInterval = 10;
+    conn_opts.cleansession = 1;
+    if ((rc = MQTTAsync_connect(client, &conn_opts)) != MQTTASYNC_SUCCESS)
+    {
+        printf("Failed to start connect, return code %d\n", rc);
+        finished = 1;
+    }
+}
+
+void mqtt_onConnectFailure(void* context, MQTTAsync_failureData* response)
+{
+        printf("Connect failed, rc %d\n", response ? response->code : 0);
+        finished = 1;
+}
+
+void mqtt_onDisconnect(void* context, MQTTAsync_successData* response)
+{
+        printf("Successful disconnection\n");
+        finished = 1;
+}
+
+void mqtt_onSubscribe(void* context, MQTTAsync_successData* response)
+{
+        printf("Subscribe succeeded\n");
+        subscribed = 1;
+}
+
+void mqtt_onSubscribeFailure(void* context, MQTTAsync_failureData* response)
+{
+        printf("Subscribe failed, rc %d\n", response ? response->code : 0);
+        finished = 1;
+        subscribed = 0;
 }
 
 
-
 void thread_labscim_mqtt(void) 
-{    
-    MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
+{
+    MQTTAsync client;
+    MQTTAsync_connectOptions conn_opts = MQTTAsync_connectOptions_initializer;
+    MQTTAsync_disconnectOptions disc_opts = MQTTAsync_disconnectOptions_initializer;
+    MQTTAsync_token token;
     int rc;
+
+    pthread_mutex_lock(&gEmitListMutex);
     labscim_ll_init_list(&gEmitSignalList);
+    pthread_mutex_unlock(&gEmitListMutex);
 
-    if ((rc = MQTTClient_create(&gMQTTClient, ADDRESS, CLIENTID,
-                                MQTTCLIENT_PERSISTENCE_NONE, NULL)) != MQTTCLIENT_SUCCESS)
-    {
-        printf("Failed to create client, return code %d\n", rc);
-        rc = EXIT_FAILURE;
-        goto exit;
-    }
-
-    if ((rc = MQTTClient_setCallbacks(gMQTTClient, NULL, mqtt_connlost, mqtt_msgarrvd, mqtt_delivered)) != MQTTCLIENT_SUCCESS)
-    {
-        printf("Failed to set callbacks, return code %d\n", rc);
-        rc = EXIT_FAILURE;
-        goto destroy_exit;
-    }
+    MQTTAsync_create(&client, ADDRESS, CLIENTID, MQTTCLIENT_PERSISTENCE_NONE, NULL);
+    MQTTAsync_setCallbacks(client, (void*)client, mqtt_connlost, mqtt_msgarrvd, NULL);     
 
     conn_opts.keepAliveInterval = 10;
     conn_opts.cleansession = 1;
-    conn_opts.maxInflightMessages = 30;
-    conn_opts.reliable = false;    
-    if ((rc = MQTTClient_connect(gMQTTClient, &conn_opts)) != MQTTCLIENT_SUCCESS)
+    conn_opts.onSuccess = mqtt_onConnect;
+    conn_opts.onFailure = mqtt_onConnectFailure;
+    conn_opts.context = client;
+    if ((rc = MQTTAsync_connect(client, &conn_opts)) != MQTTASYNC_SUCCESS)
     {
-        printf("Failed to connect, return code %d\n", rc);
-        rc = EXIT_FAILURE;
-        goto destroy_exit;
+        printf("Failed to start connect, return code %d\n", rc);
+        exit(EXIT_FAILURE);
     }
-
-    printf("Subscribing to topic %s\nfor client %s using QoS%d\n\n", TOPIC, CLIENTID, QOS);
-    if ((rc = MQTTClient_subscribe(gMQTTClient, TOPIC, QOS)) != MQTTCLIENT_SUCCESS)
+    
+    /* main loop task */
+    while (!lib_exit_sig && !lib_quit_sig)
     {
-        printf("Failed to subscribe, return code %d\n", rc);
-        rc = EXIT_FAILURE;
-    }
-    else
-    {
-        int ch;
-        /* main loop task */
-        while (!lib_exit_sig && !lib_quit_sig) 
+        wait_ms(500);
+        if(finished)
         {
-            wait_ms(500);
-        }
-
-        if ((rc = MQTTClient_unsubscribe(gMQTTClient, TOPIC)) != MQTTCLIENT_SUCCESS)
-        {
-            printf("Failed to unsubscribe, return code %d\n", rc);
-            rc = EXIT_FAILURE;
+            mqtt_connlost(client, " reconnect");
         }
     }
-
-    if ((rc = MQTTClient_disconnect(gMQTTClient, 10000)) != MQTTCLIENT_SUCCESS)
+    
+    disc_opts.onSuccess = mqtt_onDisconnect;
+    if ((rc = MQTTAsync_disconnect(client, &disc_opts)) != MQTTASYNC_SUCCESS)
     {
-        printf("Failed to disconnect, return code %d\n", rc);
-        rc = EXIT_FAILURE;
+        printf("Failed to start sendMessage, return code %d\n", rc);
+        exit(EXIT_FAILURE);
     }
+    
 destroy_exit:
-    MQTTClient_destroy(&gMQTTClient);
+    MQTTAsync_destroy(&client);
 exit:
     printf("\nINFO: End of validation thread\n");
     return rc;
