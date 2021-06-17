@@ -20,6 +20,8 @@ uint64_t gServerPort;
 uint64_t gBufferSize;
 uint32_t gBootReceived=0;
 uint32_t gProcessing=0;
+uint8_t gMQTTAddress[48];
+uint8_t gMQTTTopic[128];
 
 uint8_t mac_addr[] = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08 };
 
@@ -40,6 +42,8 @@ void labscim_protocol_boot(struct labscim_protocol_boot* msg)
 	labscim_set_time(cns->startup_time);
 	gBootReceived = 1;
     gCommandLabscimLog = cns->labscim_log_master;
+    strcpy(gMQTTAddress,cns->MQTTLoggerAddress);
+    strcpy(gMQTTTopic,cns->MQTTLoggerApplicationTopic);
 	free(msg);
 	return;
 }

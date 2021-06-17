@@ -9,6 +9,8 @@ struct lora_gateway_setup
     uint64_t startup_time;
     uint64_t labscim_log_master;
     uint8_t output_logs;
+    int8_t MQTTLoggerAddress[48];
+    int8_t MQTTLoggerApplicationTopic[128];
 }__attribute__((packed));
 
 

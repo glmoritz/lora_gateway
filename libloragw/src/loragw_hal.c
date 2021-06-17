@@ -62,9 +62,13 @@ void mqtt_onSend(void* context, MQTTAsync_successData* response);
 void mqtt_onConnect(void* context, MQTTAsync_successData* response);
 
 
-#define ADDRESS     "192.168.100.105"
+
+
+
+extern uint8_t gMQTTAddress[48];
+extern uint8_t gMQTTTopic[128];
+
 #define CLIENTID    "LabSCim gateway"
-#define TOPIC       "application/1/device/#"
 #define QOS         1
 #define TIMEOUT     10000L
 
@@ -925,7 +929,7 @@ void mqtt_onConnect(void* context, MQTTAsync_successData* response)
         int rc;
         printf("Successful connection\n");
 
-        printf("Subscribing to topic %s\nfor client %s using QoS%d\n\n", TOPIC, CLIENTID, QOS);
+        printf("Subscribing to topic %s\nfor client %s using QoS%d\n\n", gMQTTTopic, CLIENTID, QOS);
         
         opts.onSuccess = mqtt_onSubscribe;
         opts.onFailure = mqtt_onSubscribeFailure;
@@ -934,7 +938,7 @@ void mqtt_onConnect(void* context, MQTTAsync_successData* response)
         deliveredtoken = 0;
         finished = 0;
         subscribed = 0;
-        if ((rc = MQTTAsync_subscribe(client, TOPIC, QOS, &opts)) != MQTTASYNC_SUCCESS)
+        if ((rc = MQTTAsync_subscribe(client, gMQTTTopic, QOS, &opts)) != MQTTASYNC_SUCCESS)
         {
             printf("Failed to start subscribe, return code %d\n", rc);
             exit(EXIT_FAILURE);
@@ -1111,7 +1115,7 @@ void thread_labscim_mqtt(void)
     labscim_ll_init_list(&gEmitSignalList);
     pthread_mutex_unlock(&gEmitListMutex);
 
-    MQTTAsync_create(&client, ADDRESS, CLIENTID, MQTTCLIENT_PERSISTENCE_NONE, NULL);
+    MQTTAsync_create(&client, gMQTTAddress, CLIENTID, MQTTCLIENT_PERSISTENCE_NONE, NULL);
     MQTTAsync_setCallbacks(client, (void*)client, mqtt_connlost, mqtt_msgarrvd, NULL);     
 
     conn_opts.keepAliveInterval = 10;
