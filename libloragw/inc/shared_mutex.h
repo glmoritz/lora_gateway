@@ -1,1 +1,1 @@
-/home/guilherme/contiki-ng/arch/platform/labscim/shared_mutex.h
+../../../contiki-ng/arch/platform/labscim/shared_mutex.h

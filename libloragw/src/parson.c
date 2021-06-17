@@ -1,1 +1,1 @@
-/home/guilherme/packet_forwarder/lora_pkt_fwd/src/parson.c
+../../../packet_forwarder/lora_pkt_fwd/src/parson.c
