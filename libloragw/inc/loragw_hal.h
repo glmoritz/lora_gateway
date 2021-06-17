@@ -415,6 +415,13 @@ const char* lgw_version_info(void);
 */
 uint32_t lgw_time_on_air(struct lgw_pkt_tx_s *packet);
 
+/**
+@brief Printf like function which outputs text to omnet simulation log
+@return Size of written text
+*/
+
+int labscim_printf(const char *fmt, ...);
+
 #endif
 
 /* --- EOF ------------------------------------------------------------------ */

@@ -10,7 +10,8 @@ CROSS_COMPILE ?=
 CC := $(CROSS_COMPILE)gcc
 AR := $(CROSS_COMPILE)ar
 
-CFLAGS := -O0 -DIS_LABSCIM_CLIENT -DLABSCIM_LOG_COMMANDS -g -Wall -Wextra -std=c99 -Iinc -I.
+#CFLAGS := -O0 -DIS_LABSCIM_CLIENT -DLABSCIM_LOG_COMMANDS -g -Wall -Wextra -std=c99 -Iinc -I.
+CFLAGS := -O0 -DIS_LABSCIM_CLIENT -g -Wall -Wextra -std=c99 -Iinc -I.
 
 OBJDIR = obj
 INCLUDES = $(wildcard inc/*.h)
