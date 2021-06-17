@@ -23,6 +23,7 @@ Maintainer: Sylvain Miermont
 
 #include <sys/time.h>
 #include <math.h>    /* pow, cell */
+#include <stdarg.h>
 
 #include "loragw_reg.h"
 #include "loragw_hal.h"
@@ -62,7 +63,7 @@ void mqtt_onSend(void* context, MQTTAsync_successData* response);
 void mqtt_onConnect(void* context, MQTTAsync_successData* response);
 
 
-#define ADDRESS     "192.168.100.105"
+#define ADDRESS     "localhost"
 #define CLIENTID    "LabSCim gateway"
 #define TOPIC       "application/1/device/#"
 #define QOS         1
@@ -972,7 +973,9 @@ int mqtt_msgarrvd(void *context, char *topicName, int topicLen, MQTTAsync_messag
     uint32_t i;
     struct signal_emit* sig;
     
-    printf("Message arrived\n");
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    printf("%lu, Message arrived\n", tv.tv_sec*1000000+tv.tv_usec);
     printf("   topic: %s\n", topicName);
     printf("   message: %.*s\n", message->payloadlen, (char*)message->payload);   
    
@@ -1599,6 +1602,21 @@ int lgw_receive(uint8_t max_pkt, struct lgw_pkt_rx_s *pkt_data)
         }
     }
     return nb_pkt_fetch;
+}
+
+/* ~~ */
+
+int labscim_printf(const char *fmt, ...)
+{
+	#define LOGLEVEL_INFO (3)
+    char buffer[256];
+    va_list args;
+    va_start(args, fmt);
+    int rc = vsnprintf(buffer, sizeof(buffer), fmt, args);
+    printf("%s",buffer);
+	print_message(gNodeOutputBuffer,LOGLEVEL_INFO,buffer,rc);
+	va_end(args);
+    return rc;
 }
 
 /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
