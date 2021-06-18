@@ -63,16 +63,10 @@ void mqtt_onSend(void* context, MQTTAsync_successData* response);
 void mqtt_onConnect(void* context, MQTTAsync_successData* response);
 
 
-<<<<<<< HEAD
-
-
 
 extern uint8_t gMQTTAddress[48];
 extern uint8_t gMQTTTopic[128];
 
-=======
-#define ADDRESS     "localhost"
->>>>>>> 0fb1e3b632bf7f3ca3827200432e5999f173f041
 #define CLIENTID    "LabSCim gateway"
 #define QOS         1
 #define TIMEOUT     10000L
