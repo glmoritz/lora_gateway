@@ -1362,7 +1362,7 @@ int lgw_start(uint8_t* NodeName, uint32_t BufferSize, uint64_t* GatewayMac)
     mp.TransmitPower_dBm = 27;
     mp.ModulationParams.Params.LoRa.CodingRate = 1;
     mp.ModulationParams.Params.LoRa.SpreadingFactor = 7;
-    radio_setup.Params.LoRa.Bandwidth = (max_freq-min_freq)+500000;
+    radio_setup.Params.LoRa.Bandwidth = (max_freq-min_freq)+200000;
     memcpy(&(mp.ModulationParams), &radio_setup, sizeof(ModulationParams_t));
     radio_command(gNodeOutputBuffer, LORA_RADIO_SET_MODULATION_PARAMS, (void *)&mp, sizeof(struct lora_set_modulation_params));
 
