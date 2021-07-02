@@ -1029,7 +1029,7 @@ int mqtt_msgarrvd(void *context, char *topicName, int topicLen, MQTTAsync_messag
                pthread_mutex_unlock(&gEmitListMutex);
                if (client != NULL)
                {
-                   values[2] = gLabscimTime;
+                  values[2] = gLabscimTime;
                    bin_to_b64(payload, sizeof(uint64_t) * 3, enc_payload, 255);
                    sprintf(payload, "{\"confirmed\": false, \"fPort\": 2, \"data\": \"%s\"}", enc_payload);
                    opts.onSuccess = mqtt_onSend;
@@ -1040,12 +1040,12 @@ int mqtt_msgarrvd(void *context, char *topicName, int topicLen, MQTTAsync_messag
                    pubmsg.retained = 0;
                    deliveredtoken = 0;
                    //application/[ApplicationID]/device/[DevEUI]/command/down
-                   sprintf(return_topic, "application/%s/%s/%s/command/down", token[1], token[2], token[3]);
-                   if ((rc = MQTTAsync_sendMessage(client, return_topic, &pubmsg, &opts)) != MQTTASYNC_SUCCESS)
-                   {
-                       printf("Failed to start sendMessage, return code %d\n", rc);
-                       exit(EXIT_FAILURE);
-                   }
+                //    sprintf(return_topic, "application/%s/%s/%s/command/down", token[1], token[2], token[3]);
+                //    if ((rc = MQTTAsync_sendMessage(client, return_topic, &pubmsg, &opts)) != MQTTASYNC_SUCCESS)
+                //    {
+                //        printf("Failed to start sendMessage, return code %d\n", rc);
+                //        exit(EXIT_FAILURE);
+                //    }
                    sig = (struct signal_emit *)malloc(sizeof(struct signal_emit));
                    sig->id = gPacketGeneratedSignal;
                    sig->value = gLabscimTime / 1e6;
@@ -1321,9 +1321,9 @@ int lgw_start(uint8_t* NodeName, uint32_t BufferSize, uint64_t* GatewayMac)
 
     if (gCommandLabscimLog)
     {
-		gPacketGeneratedSignal = LabscimSignalRegister("DownstreamPacketGenerated");
-		gPacketLatencySignal = LabscimSignalRegister("UpstreamPacketLatency");
-        gPacketErrorSignal = LabscimSignalRegister("UpstreamPacketError");
+		gPacketGeneratedSignal = LabscimSignalRegister("LoRaDownstreamPacketGenerated");
+		gPacketLatencySignal = LabscimSignalRegister("LoRaUpstreamPacketLatency");
+        gPacketErrorSignal = LabscimSignalRegister("LoRaUpstreamPacketError");
 
         i = pthread_create(&gThridMQTT, NULL, (void *(*)(void *))thread_labscim_mqtt, NULL);
         if (i != 0)
@@ -1608,15 +1608,21 @@ int lgw_receive(uint8_t max_pkt, struct lgw_pkt_rx_s *pkt_data)
 
 /* ~~ */
 
+char gBuffer[256];
 int labscim_printf(const char *fmt, ...)
 {
-	#define LOGLEVEL_INFO (3)
-    char buffer[256];
+	#define LOGLEVEL_INFO (3)    
     va_list args;
     va_start(args, fmt);
-    int rc = vsnprintf(buffer, sizeof(buffer), fmt, args);
-    printf("%s",buffer);
-	print_message(gNodeOutputBuffer,LOGLEVEL_INFO,buffer,rc);
+    int rc = vsnprintf(gBuffer, sizeof(gBuffer), fmt, args);	
+	if(rc>sizeof(gBuffer))
+	{
+		strcpy(gBuffer+strlen(gBuffer)-4,"...");		
+		rc = sizeof(gBuffer);
+	}
+	gBuffer[sizeof(gBuffer)-1]=0;
+    printf("%s",gBuffer);
+	print_message(gNodeOutputBuffer,LOGLEVEL_INFO,gBuffer,strlen(gBuffer)+1);
 	va_end(args);
     return rc;
 }
