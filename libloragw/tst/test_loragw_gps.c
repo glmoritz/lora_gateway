@@ -64,7 +64,7 @@ static void sig_handler(int sigio) {
 
 static void gps_process_sync(void) {
     /* variables for PPM pulse GPS synchronization */
-    uint32_t ppm_tstamp;
+    uint64_t ppm_tstamp;
     struct timespec ppm_gps;
     struct timespec ppm_utc;
 

@@ -39,7 +39,7 @@ Maintainer: Michael Coracin
 */
 struct tref {
     time_t          systime;    /*!> system time when solution was calculated */
-    uint32_t        count_us;   /*!> reference concentrator internal timestamp */
+    uint64_t        count_us;   /*!> reference concentrator internal timestamp */
     struct timespec utc;        /*!> reference UTC time (from GPS/NMEA) */
     struct timespec gps;        /*!> reference GPS time (since 01.Jan.1980) */
     double          xtal_err;   /*!> raw clock error (eg. <1 'slow' XTAL) */
@@ -172,7 +172,7 @@ int lgw_gps_get(struct timespec *utc, struct timespec *gps_time, struct coord_s 
 
 Set systime to 0 in ref to trigger initial synchronization.
 */
-int lgw_gps_sync(struct tref *ref, uint32_t count_us, struct timespec utc, struct timespec gps_time);
+int lgw_gps_sync(struct tref *ref, uint64_t count_us, struct timespec utc, struct timespec gps_time);
 
 /**
 @brief Convert concentrator timestamp counter value to UTC time

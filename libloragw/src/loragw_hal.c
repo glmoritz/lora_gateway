@@ -1220,12 +1220,12 @@ void labscim_radio_incoming_response(struct labscim_radio_response *cmd)
 
 void lgw_labscim_get_time(struct timeval *time)
 {
-    //struct timespec utc;
-    //lgw_gps_get(&utc, NULL, NULL, NULL);   
-    //time->tv_sec = utc.tv_sec;
-    //time->tv_usec = utc.tv_nsec/1000;
-    time->tv_sec = gLabscimTime/1000000;
-    time->tv_usec = gLabscimTime%1000000;
+    struct timespec utc;
+    lgw_gps_get(&utc, NULL, NULL, NULL);   
+    time->tv_sec = utc.tv_sec;
+    time->tv_usec = utc.tv_nsec/1000;
+    //time->tv_sec = gLabscimTime/1000000;
+    //time->tv_usec = gLabscimTime%1000000;
 }
 
 
@@ -2144,7 +2144,7 @@ int lgw_abort_tx(void)
 
 /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
-int lgw_get_trigcnt(uint32_t *trig_cnt_us)
+int lgw_get_trigcnt(uint64_t *trig_cnt_us)
 {
     //int i;
     //int32_t val;
@@ -2152,7 +2152,7 @@ int lgw_get_trigcnt(uint32_t *trig_cnt_us)
     //i = lgw_reg_r(LGW_TIMESTAMP, &val);
     //if (i == LGW_REG_SUCCESS)
     //{
-        *trig_cnt_us = (uint32_t)(gLabscimTime);
+        *trig_cnt_us = (uint64_t)(gLabscimTime);
         return LGW_HAL_SUCCESS;
     //}
     //else

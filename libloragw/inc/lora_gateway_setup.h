@@ -11,6 +11,9 @@ struct lora_gateway_setup
     uint8_t output_logs;
     int8_t MQTTLoggerAddress[48];
     int8_t MQTTLoggerApplicationTopic[128];
+    double lat_deg;
+    double lon_deg;
+    double alt_m;
 }__attribute__((packed));
 
 
