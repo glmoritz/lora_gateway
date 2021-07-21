@@ -79,7 +79,7 @@ static int32_t gps_fTOW = 0; /* Fractional part of iTOW (+/-500000) in nanosec *
 static int32_t labscim_systime = 1575169200; //seconds since 01/12/2019
 
 
-struct timeval gTVStart;
+extern struct timeval gTVStart;
     
 
 static short gps_dla = 0; /* degrees of latitude */
@@ -387,12 +387,8 @@ int lgw_gps_enable(char *tty_path, char *gps_family, speed_t target_brate, int *
 
     /* initialize global variables */
     gps_time_ok = true;
-    gps_pos_ok = false;
-    gps_mod = 'N';
-    gettimeofday(&gTVStart,NULL);
-    uint64_t t = (gTVStart.tv_sec*1000000 + gTVStart.tv_usec) - gLabscimTime; 
-    gTVStart.tv_sec = t/1000000;
-    gTVStart.tv_usec = t%1000000;
+    gps_pos_ok = true;
+    gps_mod = 'N';    
     return LGW_GPS_SUCCESS;
 }
 
@@ -876,7 +872,7 @@ int lgw_gps2cnt(struct tref ref, struct timespec gps_time, uint32_t *count_us) {
     //*count_us = ref.count_us + (uint32_t)(delta_sec * TS_CPS * ref.xtal_err)
 
     
-    *count_us = (gps_time.tv_sec*1000000+gps_time.tv_nsec/1000)+315964800000-(gTVStart.tv_sec*1000000+gTVStart.tv_usec);
+    *count_us = (gps_time.tv_sec*1000000+gps_time.tv_nsec/1000)+315964800000000-(gTVStart.tv_sec*1000000+gTVStart.tv_usec);
     return LGW_GPS_SUCCESS;
 }
 

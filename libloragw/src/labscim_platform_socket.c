@@ -1,5 +1,6 @@
 //labscim related structures
 #include <stdarg.h>
+#include <sys/time.h>
 #include "labscim_linked_list.h"
 #include "labscim_protocol.h"
 #include "labscim_socket.h"
@@ -27,6 +28,7 @@ double gGPSLatitude_deg=0;
 double gGPSLongitude_deg=0;
 double gGPSAltitude_m=0;
 
+struct timeval gTVStart = {0,0};
 
 uint8_t mac_addr[] = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08 };
 
@@ -50,6 +52,9 @@ void labscim_protocol_boot(struct labscim_protocol_boot* msg)
     gGPSAltitude_m = cns->alt_m;
     gGPSLatitude_deg = cns->lat_deg;
     gGPSLongitude_deg = cns->lon_deg;
+
+    gTVStart.tv_sec = cns->TimeReference / 1000000;
+    gTVStart.tv_usec = cns->TimeReference % 1000000;
 
     strcpy(gMQTTAddress,cns->MQTTLoggerAddress);
     strcpy(gMQTTTopic,cns->MQTTLoggerApplicationTopic);

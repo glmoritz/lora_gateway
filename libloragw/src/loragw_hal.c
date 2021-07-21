@@ -1222,10 +1222,10 @@ void lgw_labscim_get_time(struct timeval *time)
 {
     struct timespec utc;
     lgw_gps_get(&utc, NULL, NULL, NULL);   
-    time->tv_sec = utc.tv_sec;
-    time->tv_usec = utc.tv_nsec/1000;
-    //time->tv_sec = gLabscimTime/1000000;
-    //time->tv_usec = gLabscimTime%1000000;
+    //time->tv_sec = utc.tv_sec;
+    //time->tv_usec = utc.tv_nsec/1000;
+    time->tv_sec = gLabscimTime/1000000;
+    time->tv_usec = gLabscimTime%1000000;
 }
 
 
