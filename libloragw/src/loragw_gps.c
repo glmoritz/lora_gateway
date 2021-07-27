@@ -767,7 +767,7 @@ int lgw_cnt2utc(struct tref ref, uint32_t count_us, struct timespec *utc) {
     //double delta_sec;
     //double intpart, fractpart;
     //long tmp;
-    uint64_t time = gTVStart.tv_sec*1000000+gTVStart.tv_usec+count_us;
+    uint64_t time = gTVStart.tv_sec*1000000+gTVStart.tv_usec+count_us+(gLabscimTime&0xFFFFFFFF00000000);
     
 
     CHECK_NULL(utc);
@@ -826,7 +826,7 @@ int lgw_cnt2gps(struct tref ref, uint32_t count_us, struct timespec *gps_time)
     //double intpart, fractpart;
     //long tmp;
 
-    uint64_t time = gTVStart.tv_sec*1000000+gTVStart.tv_usec+count_us;
+    uint64_t time = gTVStart.tv_sec*1000000+gTVStart.tv_usec+count_us+(gLabscimTime&0xFFFFFFFF00000000);
     CHECK_NULL(gps_time);
     if ((ref.systime == 0) || (ref.xtal_err > PLUS_10PPM) || (ref.xtal_err < MINUS_10PPM)) {
         DEBUG_MSG("ERROR: INVALID REFERENCE FOR CNT -> GPS CONVERSION\n");

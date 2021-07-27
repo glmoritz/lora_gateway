@@ -1803,7 +1803,15 @@ int lgw_send(struct lgw_pkt_tx_s pkt_data)
         buff[6] = 0xFF & count_trig;
     }
 
-    msg->Tx_Delay_us = pkt_data.count_us-gLabscimTime;
+    if(pkt_data.count_us > (uint32_t)gLabscimTime)
+    {
+        msg->Tx_Delay_us = pkt_data.count_us-(uint32_t)gLabscimTime;
+    }
+    else
+    {
+        //pkt_data.count_us warped
+        msg->Tx_Delay_us = (0xFFFFFFFF - (uint32_t)gLabscimTime)+pkt_data.count_us;
+    }
     msg->CenterFrequency_Hz = pkt_data.freq_hz;
 
     /* parameters depending on modulation  */
