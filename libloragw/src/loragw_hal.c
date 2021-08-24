@@ -67,7 +67,7 @@ void mqtt_onConnect(void* context, MQTTAsync_successData* response);
 extern uint8_t gMQTTAddress[48];
 extern uint8_t gMQTTTopic[128];
 
-#define CLIENTID    "LabSCim gateway"
+#define CLIENTID    "LabSCimGateway"
 #define QOS         1
 #define TIMEOUT     10000L
 
@@ -949,6 +949,9 @@ void mqtt_onSend(void* context, MQTTAsync_successData* response)
     printf("Message with token value %d delivery confirmed\n", response->token);
 }
 
+
+
+
 int mqtt_msgarrvd(void *context, char *topicName, int topicLen, MQTTAsync_message *message)
 {
     JSON_Value *root_val;
@@ -974,12 +977,17 @@ int mqtt_msgarrvd(void *context, char *topicName, int topicLen, MQTTAsync_messag
     int8_t* data;
     uint32_t i;
     struct signal_emit* sig;
+    static uint32_t msg_counter = 0;
+    static uint32_t error_counter = 0;
+    static uint32_t up_counter = 0;
+
     
     struct timeval tv;
     gettimeofday(&tv, NULL);
     printf("%lu, Message arrived\n", tv.tv_sec*1000000+tv.tv_usec);
     printf("   topic: %s\n", topicName);
     printf("   message: %.*s\n", message->payloadlen, (char*)message->payload);   
+    msg_counter++;
    
    /* walk through other tokens */
    i = 0;
@@ -993,6 +1001,7 @@ int mqtt_msgarrvd(void *context, char *topicName, int topicLen, MQTTAsync_messag
 
    if (strcmp("error", token[5])==0)
    {
+       error_counter++;
        root_val = json_parse_string_with_comments(message->payload);
        if (root_val != NULL)
        {
@@ -1012,6 +1021,7 @@ int mqtt_msgarrvd(void *context, char *topicName, int topicLen, MQTTAsync_messag
 
    if(strcmp("up",token[5])==0)
    {
+       up_counter++;
        root_val = json_parse_string_with_comments(message->payload);
        if (root_val != NULL)
        {
@@ -1021,16 +1031,20 @@ int mqtt_msgarrvd(void *context, char *topicName, int topicLen, MQTTAsync_messag
            {               
                b64_to_bin(data, strlen(data), payload, 255);               
                uint64_t *values = (uint64_t *)payload;
-               sig = (struct signal_emit*)malloc(sizeof(struct signal_emit));
-               sig->id = gPacketLatencySignal;
-               sig->value = (gLabscimTime - values[1])/1e6;
-               pthread_mutex_lock(&gEmitListMutex);
-               labscim_ll_insert_at_back(&gEmitSignalList,(void*)sig);
-               pthread_mutex_unlock(&gEmitListMutex);
+               if (gLabscimTime > values[0])
+               {
+                   sig = (struct signal_emit *)malloc(sizeof(struct signal_emit));
+                   sig->id = gPacketLatencySignal;
+                   sig->value = (gLabscimTime - values[0]) / 1e6;
+                   pthread_mutex_lock(&gEmitListMutex);
+                   labscim_ll_insert_at_back(&gEmitSignalList, (void *)sig);
+                   pthread_mutex_unlock(&gEmitListMutex);
+               }
+               
                if (client != NULL)
                {
-                  values[2] = gLabscimTime;
-                   bin_to_b64(payload, sizeof(uint64_t) * 3, enc_payload, 255);
+                   values[1] = gLabscimTime;
+                   bin_to_b64(payload, sizeof(uint64_t) * 2, enc_payload, 255);
                    sprintf(payload, "{\"confirmed\": false, \"fPort\": 2, \"data\": \"%s\"}", enc_payload);
                    opts.onSuccess = mqtt_onSend;
                    opts.context = client;
@@ -1040,7 +1054,7 @@ int mqtt_msgarrvd(void *context, char *topicName, int topicLen, MQTTAsync_messag
                    pubmsg.retained = 0;
                    deliveredtoken = 0;
                    //application/[ApplicationID]/device/[DevEUI]/command/down
-                //    sprintf(return_topic, "application/%s/%s/%s/command/down", token[1], token[2], token[3]);
+                   sprintf(return_topic, "application/%s/%s/%s/command/down", token[1], token[2], token[3]);
                 //    if ((rc = MQTTAsync_sendMessage(client, return_topic, &pubmsg, &opts)) != MQTTASYNC_SUCCESS)
                 //    {
                 //        printf("Failed to start sendMessage, return code %d\n", rc);
@@ -1058,6 +1072,7 @@ int mqtt_msgarrvd(void *context, char *topicName, int topicLen, MQTTAsync_messag
    }
     MQTTAsync_freeMessage(&message);
     MQTTAsync_free(topicName);
+    printf("Msgs: %d, Errors: %d, Ups: %d\n",msg_counter,error_counter,up_counter);
     return 1;
 }
 
@@ -1115,8 +1130,14 @@ void thread_labscim_mqtt(void)
     pthread_mutex_lock(&gEmitListMutex);
     labscim_ll_init_list(&gEmitSignalList);
     pthread_mutex_unlock(&gEmitListMutex);
+    char client_id[64];
 
-    MQTTAsync_create(&client, gMQTTAddress, CLIENTID, MQTTCLIENT_PERSISTENCE_NONE, NULL);
+    strcpy(client_id,CLIENTID);
+    sprintf(client_id+strlen(client_id),"%d",getpid());
+
+
+
+    MQTTAsync_create(&client, gMQTTAddress, client_id, MQTTCLIENT_PERSISTENCE_NONE, NULL);
     MQTTAsync_setCallbacks(client, (void*)client, mqtt_connlost, mqtt_msgarrvd, NULL);     
 
     conn_opts.keepAliveInterval = 10;
