@@ -40,6 +40,7 @@ extern struct labscim_ll gThreadCommands;
 uint8_t gByteBuffer[DBG_PRINT_BUFFER_SIZE];
 
 void labscim_set_time(uint64_t time);
+void labscim_signal_arrived(struct labscim_signal* sig);
 
 
 void labscim_protocol_boot(struct labscim_protocol_boot* msg)
@@ -106,6 +107,21 @@ int socket_process_command(struct labscim_protocol_header *hdr)
 #endif
         labscim_set_time(((struct labscim_radio_response *)(hdr))->current_time);
         labscim_radio_incoming_response((struct labscim_radio_response *)(hdr));
+        break;
+    }
+    case LABSCIM_SIGNAL:
+    {
+        labscim_set_time(((struct labscim_signal *)(hdr))->current_time);
+        labscim_signal_arrived((struct labsim_signal *)(hdr));
+        break;
+    }
+    case LABSCIM_END:
+    {
+#ifdef LABSCIM_LOG_COMMANDS
+        sprintf(log, "seq%4d\tEND\n", hdr->sequence_number);
+        labscim_log(log, "pro ");
+#endif
+        exit(0);
         break;
     }
     default:
