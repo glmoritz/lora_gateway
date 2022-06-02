@@ -52,6 +52,7 @@ extern uint8_t mac_addr[];
 
 /*LabSCim MQTT result collector*/
 #include "MQTTAsync.h"
+#include "MQTTClient.h"
 
 void mqtt_onSubscribeFailure(void* context, MQTTAsync_failureData* response);
 void mqtt_onSubscribe(void* context, MQTTAsync_successData* response);
@@ -80,6 +81,7 @@ uint64_t gPacketGeneratedSignal;
 uint64_t gPacketLatencySignal;
 uint64_t gPacketErrorSignal;
 uint64_t gPacketReceivedSignal;
+uint64_t gDownstreamPacket;
 
 struct signal_info
 {
@@ -91,8 +93,14 @@ struct signal_info
 	double aoi_area;
 } __attribute__((packed));
 
+
 pthread_mutex_t gEmitListMutex = PTHREAD_MUTEX_INITIALIZER;
 struct labscim_ll gEmitSignalList;
+
+pthread_mutex_t gDownstreamListMutex = PTHREAD_MUTEX_INITIALIZER;
+struct labscim_ll gDownstreamSignalList;
+
+
 uint64_t gSignature=0;
 
 
@@ -254,15 +262,25 @@ int32_t lgw_bw_getval(int x);
 void EmitAndYield()
 {
     struct signal_info *si;
+    uint64_t* signature;
     pthread_mutex_lock(&gEmitListMutex);
     si = (struct signal_info *)labscim_ll_pop_front(&gEmitSignalList);
     while (si != NULL)
     {
         LabscimSignalEmitChar(gPacketReceivedSignal, (char *)si, sizeof(struct signal_info));
         free(si);
-        si = labscim_ll_pop_front(&gEmitSignalList);
+        si = (struct signal_info *)labscim_ll_pop_front(&gEmitSignalList);
     }
     pthread_mutex_unlock(&gEmitListMutex);
+    pthread_mutex_lock(&gDownstreamListMutex);
+    signature = (uint64_t *)labscim_ll_pop_front(&gDownstreamSignalList);
+    while (signature != NULL)
+    {
+        LabscimSignalEmitChar(gDownstreamPacket, (char *)signature, sizeof(uint64_t));
+        free(signature);
+        signature = (uint64_t *)labscim_ll_pop_front(&gDownstreamSignalList);
+    }
+    pthread_mutex_unlock(&gDownstreamListMutex);
     protocol_yield(gNodeOutputBuffer);
 }
 
@@ -965,7 +983,15 @@ void mqtt_onSend(void* context, MQTTAsync_successData* response)
     printf("Message with token value %d delivery confirmed\n", response->token);
 }
 
-
+void schedule_for_downstream(uint64_t signature)
+{
+    uint64_t* sig;
+    sig = (uint64_t *)malloc(sizeof(uint64_t));
+    *sig = signature;
+    pthread_mutex_lock(&gDownstreamListMutex);
+    labscim_ll_insert_at_back(&gDownstreamSignalList, (void *)sig);
+    pthread_mutex_unlock(&gDownstreamListMutex);
+}
 
 void schedule_for_emission(struct signal_info* si)
 {
@@ -1050,8 +1076,32 @@ int mqtt_msgarrvd(void *context, char *topicName, int topicLen, MQTTAsync_messag
        token[i] = strtok(NULL, s);       
    }
    
-
-   if (strcmp("error", token[5])==0)
+   if (strcmp("downstreamtopic", token[0]) == 0)
+   {
+       uint64_t v;
+       uint8_t dev_id[64];
+       memset(dev_id,0,64);
+       v = gLabscimTime;
+       bin_to_b64((uint8_t*)&v, sizeof(uint64_t), enc_payload, 255);
+       sprintf(payload, "{\"confirmed\": false, \"fPort\": 2, \"data\": \"%s\"}", enc_payload);
+       opts.onSuccess = mqtt_onSend;
+       opts.context = client;
+       pubmsg.payload = payload;
+       pubmsg.payloadlen = strlen(payload);
+       pubmsg.qos = QOS;
+       pubmsg.retained = 0;
+       deliveredtoken = 0;
+       // application/[ApplicationID]/device/[DevEUI]/command/down
+       memcpy(dev_id,message->payload,message->payloadlen);
+       sprintf(return_topic, "application/%s/%s/%s/command/down", "1", "device", dev_id);
+       if ((rc = MQTTAsync_sendMessage(client, return_topic, &pubmsg, &opts)) != MQTTASYNC_SUCCESS)
+       {
+           printf("Failed to start sendMessage, return code %d\n", rc);
+           exit(EXIT_FAILURE);
+       }
+       schedule_for_downstream((uint64_t)strtol((char*)dev_id, NULL, 16));
+   }
+   else if (strcmp("error", token[5])==0)
    {
        error_counter++;
        root_val = json_parse_string_with_comments(message->payload);
@@ -1072,8 +1122,7 @@ int mqtt_msgarrvd(void *context, char *topicName, int topicLen, MQTTAsync_messag
            }
        }
    }
-
-   if(strcmp("up",token[5])==0)
+   else if(strcmp("up",token[5])==0)
    {
        up_counter++;
        root_val = json_parse_string_with_comments(message->payload);
@@ -1101,8 +1150,8 @@ int mqtt_msgarrvd(void *context, char *topicName, int topicLen, MQTTAsync_messag
                
             //    if (client != NULL)
             //    {
-            //        values[1] = gLabscimTime;
-            //        bin_to_b64(payload, sizeof(uint64_t) * 2, enc_payload, 255);
+            //        values[0] = gLabscimTime;
+            //        bin_to_b64(payload, sizeof(uint64_t), enc_payload, 255);
             //        sprintf(payload, "{\"confirmed\": false, \"fPort\": 2, \"data\": \"%s\"}", enc_payload);
             //        opts.onSuccess = mqtt_onSend;
             //        opts.context = client;
@@ -1118,16 +1167,15 @@ int mqtt_msgarrvd(void *context, char *topicName, int topicLen, MQTTAsync_messag
             //             printf("Failed to start sendMessage, return code %d\n", rc);
             //             exit(EXIT_FAILURE);
             //         }
-            //        schedule_for_emission(gPacketGeneratedSignal,gLabscimTime / 1e6);
-                   
+            //         schedule_for_downstream((uint64_t)strtol(token[3], NULL, 16));
             //    }
            }
        }
    }
-    MQTTAsync_freeMessage(&message);
-    MQTTAsync_free(topicName);
-    printf("Msgs: %d, Errors: %d, Ups: %d\n",msg_counter,error_counter,up_counter);
-    return 1;
+   MQTTAsync_freeMessage(&message);
+   MQTTAsync_free(topicName);
+   printf("Msgs: %d, Errors: %d, Ups: %d\n", msg_counter, error_counter, up_counter);
+   return 1;
 }
 
 void mqtt_connlost(void *context, char *cause)
@@ -1162,7 +1210,25 @@ void mqtt_onDisconnect(void* context, MQTTAsync_successData* response)
 void mqtt_onSubscribe(void* context, MQTTAsync_successData* response)
 {
         printf("Subscribe succeeded\n");
-        subscribed = 1;
+        subscribed++;
+
+        if(subscribed==1)
+        {
+            MQTTAsync client = (MQTTAsync)context;
+            MQTTAsync_responseOptions opts = MQTTAsync_responseOptions_initializer;
+
+            int rc;
+
+            opts.onSuccess = mqtt_onSubscribe;
+            opts.onFailure = mqtt_onSubscribeFailure;
+            opts.context = client;
+            
+            if ((rc = MQTTAsync_subscribe(client, "downstreamtopic", QOS, &opts)) != MQTTASYNC_SUCCESS)
+            {
+                printf("Failed to start subscribe, return code %d\n", rc);
+                exit(EXIT_FAILURE);
+            }
+        }
 }
 
 void mqtt_onSubscribeFailure(void* context, MQTTAsync_failureData* response)
@@ -1404,6 +1470,7 @@ int lgw_start(uint8_t* NodeName, uint32_t BufferSize, uint64_t* GatewayMac)
 		gPacketLatencySignal = LabscimSignalRegister("LoRaDownstreamPacketLatency");
         
         gPacketReceivedSignal = LabscimSignalRegister("LoRaPacketReceived");	    
+        gDownstreamPacket = LabscimSignalRegister("LoRaDownstreamPacket");	    
 
         gAoIMaxSignal = LabscimSignalRegister("LoRaDownstreamAoIMax");
         gAoIMinSignal = LabscimSignalRegister("LoRaDownstreamAoIMin");
@@ -1441,14 +1508,22 @@ int lgw_start(uint8_t* NodeName, uint32_t BufferSize, uint64_t* GatewayMac)
     frequency_setup.Frequency_Hz = (max_freq-min_freq)/2 + min_freq;
     radio_command(gNodeOutputBuffer, LORA_RADIO_SET_CHANNEL, (void *)&frequency_setup, sizeof(struct lora_set_frequency));
 
-    struct lora_set_modulation_params mp;
-    ModulationParams_t radio_setup;    
-    mp.TransmitPower_dBm = 27;
-    mp.ModulationParams.Params.LoRa.CodingRate = 1;
-    mp.ModulationParams.Params.LoRa.SpreadingFactor = 7;
-    radio_setup.Params.LoRa.Bandwidth = (max_freq-min_freq)+200000;
-    memcpy(&(mp.ModulationParams), &radio_setup, sizeof(ModulationParams_t));
+    struct lora_set_power sp;
+    sp.Power_dbm = 27;
+    radio_command(gNodeOutputBuffer, LORA_RADIO_SET_POWER, (void *)&sp, sizeof(struct lora_set_power));
+
+    struct lora_set_modulation_params mp;    
+    mp.ModulationParams.cr = 1;
+    mp.ModulationParams.sf = 7;
+    mp.ModulationParams.bw = 0;  //not used 
+    mp.ModulationParams.ldro = 0; //not used    
     radio_command(gNodeOutputBuffer, LORA_RADIO_SET_MODULATION_PARAMS, (void *)&mp, sizeof(struct lora_set_modulation_params));
+
+
+    struct lora_set_frequency lsf;    
+    lsf.Frequency_Hz = min_freq + 800000UL; 
+    radio_command(gNodeOutputBuffer, LORA_RADIO_SET_CHANNEL, (void *)&lsf, sizeof(struct lora_set_frequency));
+
 
     //set gateway to RX mode
     struct lora_set_rx srx;
