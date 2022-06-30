@@ -1505,7 +1505,7 @@ int lgw_start(uint8_t* NodeName, uint32_t BufferSize, uint64_t* GatewayMac)
 
     //set channel and bandwidth - this has no practical effect since gateway radio always receive all packets, but this way, spectrum plotter plots the right listening window
     struct lora_set_frequency frequency_setup;    
-    frequency_setup.Frequency_Hz = (max_freq-min_freq)/2 + min_freq;
+    frequency_setup.Frequency_Hz = min_freq + 700000UL;
     radio_command(gNodeOutputBuffer, LORA_RADIO_SET_CHANNEL, (void *)&frequency_setup, sizeof(struct lora_set_frequency));
 
     struct lora_set_power sp;
@@ -1521,7 +1521,7 @@ int lgw_start(uint8_t* NodeName, uint32_t BufferSize, uint64_t* GatewayMac)
 
 
     struct lora_set_frequency lsf;    
-    lsf.Frequency_Hz = min_freq + 800000UL; 
+    lsf.Frequency_Hz = min_freq + 700000UL; 
     radio_command(gNodeOutputBuffer, LORA_RADIO_SET_CHANNEL, (void *)&lsf, sizeof(struct lora_set_frequency));
 
 
@@ -1625,8 +1625,9 @@ int lgw_receive(uint8_t max_pkt, struct lgw_pkt_rx_s *pkt_data)
 
             /* get payload + metadata */
             //lgw_reg_rb(LGW_RX_DATA_BUF_DATA, buff, sz + RX_METADATA_NB);
-
+            
             /* process metadata  TODO: set the ifchain properly*/
+            bool FHSS = false;
             p->if_chain = 0xFF;
 
             for (int64_t i = 0; i < LGW_IF_CHAIN_NB; i++)
@@ -1636,6 +1637,16 @@ int lgw_receive(uint8_t max_pkt, struct lgw_pkt_rx_s *pkt_data)
                     p->if_chain = i;
                     break;
                 }
+            }
+
+            if(payload->HPW<0) //we are using this to detect FHSS packets
+            {
+                p->labscim_grid_size = -1;
+            }
+            else
+            {
+                p->labscim_grid_size = payload->HPW;
+                FHSS = true;
             }
 
             if (p->if_chain == 0xFF)
@@ -1654,7 +1665,14 @@ int lgw_receive(uint8_t max_pkt, struct lgw_pkt_rx_s *pkt_data)
                 //   DEBUG_PRINTF("WARNING: %u NOT A VALID IF_CHAIN NUMBER, ABORTING\n", p->if_chain);
                 //    break;
                 //}
-                ifmod = ifmod_config[p->if_chain];
+                if(!FHSS)
+                {
+                    ifmod = ifmod_config[p->if_chain];
+                }
+                else
+                {
+                    ifmod = IF_LABSCIM_FHSS;
+                }
                 //DEBUG_PRINTF("[%d %d]\n", p->if_chain, ifmod);
                 p->rf_chain = (uint8_t)if_rf_chain[p->if_chain];
                 p->freq_hz = (uint32_t)((int32_t)rf_rx_freq[p->rf_chain] + if_freq[p->if_chain]);
@@ -1667,7 +1685,7 @@ int lgw_receive(uint8_t max_pkt, struct lgw_pkt_rx_s *pkt_data)
                 {
                     p->status = STAT_CRC_OK;
                 }
-                if ((ifmod == IF_LORA_MULTI) || (ifmod == IF_LORA_STD))
+                if ((ifmod == IF_LORA_MULTI) || (ifmod == IF_LORA_STD)) 
                 {
                     DEBUG_MSG("Note: LoRa packet\n");
 
@@ -1736,9 +1754,22 @@ int lgw_receive(uint8_t max_pkt, struct lgw_pkt_rx_s *pkt_data)
                     p->datarate = fsk_rx_dr;
                     p->coderate = CR_UNDEFINED;
                 }
+                else if (ifmod == IF_LABSCIM_FHSS)
+                {
+                    DEBUG_MSG("Note: Labscim FHSS packet. Since no code was released, I got to be creative\n");
+
+                    p->modulation = MOD_LABSCIM_FHSS;
+                    p->snr = payload->SNR_db;
+                    p->snr_min = payload->SNR_db;
+                    p->snr_max = payload->SNR_db;
+                    p->bandwidth = payload->FHSSBW;
+                    p->datarate = DR_UNDEFINED;
+                    p->coderate = payload->FHSSCR;
+                }                
                 else
                 {
                     DEBUG_MSG("ERROR: UNEXPECTED PACKET ORIGIN\n");
+
                     p->status = STAT_UNDEFINED;
                     p->modulation = MOD_UNDEFINED;
                     p->rssi = -128.0;
