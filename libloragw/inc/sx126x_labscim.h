@@ -1,1 +1,1 @@
-../../../omnetpp-5.6.1/samples/labscim/src/common/sx126x_labscim.h
+../../../LoRaMac-node/src/radio/labscim_sx126x_driver/src/labscim_sx126x.h
