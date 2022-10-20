@@ -32,7 +32,7 @@ Maintainer: Sylvain Miermont
 #include "loragw_radio.h"
 #include "loragw_fpga.h"
 #include "loragw_lbt.h"
-#include "sx126x_labscim.h"
+#include "labscim_sx126x.h"
 
 /*----------------
 LABSCIM
