@@ -1,1 +1,0 @@
-../../../omnetpp-5.6.2/samples/labscim/src/common/sx126x_labscim.h

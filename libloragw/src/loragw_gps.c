@@ -79,6 +79,9 @@ static int32_t gps_fTOW = 0; /* Fractional part of iTOW (+/-500000) in nanosec *
 static int32_t labscim_systime = 1575169200; //seconds since 01/12/2019
 
 
+extern struct timeval gTVStart;
+    
+
 static short gps_dla = 0; /* degrees of latitude */
 static double gps_mla = 0.0; /* minutes of latitude */
 static char gps_ola = 0; /* orientation (N-S) of latitude */
@@ -87,6 +90,12 @@ static double gps_mlo = 0.0; /* minutes of longitude */
 static char gps_olo = 0; /* orientation (E-W) of longitude */
 static short gps_alt = 0; /* altitude */
 static bool gps_pos_ok = false;
+
+extern double gGPSLatitude_deg;
+extern double gGPSLongitude_deg;
+extern double gGPSAltitude_m;
+
+
 
 static char gps_mod = 'N'; /* GPS mode (N no fix, A autonomous, D differential) */
 static short gps_sat = 5; /* number of satellites used for fix */
@@ -114,37 +123,8 @@ uint64_t gLabscimTime;
 void labscim_set_time(uint64_t time)
 {
     uint64_t diff = time - gLabscimTime;
-	gLabscimTime = time ;	
-    //TODO: max simulation time: 31 days
-    gps_fra += diff/1e6;
-    if(gps_fra>1)
-    {
-        gps_sec += (uint64_t)gps_fra;
-        gps_fra -= (uint64_t)gps_fra;
-    }
-    if(gps_sec>59)
-    {
-        gps_min += gps_sec/60;
-        gps_sec -= (gps_sec/60)*60;
-    }
-    if(gps_min>59)
-    {
-        gps_hou += gps_min/60;
-        gps_min -= (gps_min/60)*60;
-    }
-    if(gps_hou>24)
-    {
-        gps_day += gps_hou/24;
-        gps_hou -= (gps_hou/24)*24;        
-    }
-
-    gps_iTOW += diff/1000;
-    gps_fTOW += diff*1000;
-    if(gps_fTOW>1000000000)
-    {
-        gps_iTOW += gps_fTOW/1000000000;
-        gps_fTOW -= (gps_fTOW/1000000000)*1000000000;
-    }
+	gLabscimTime = time ;
+    
 }
 
 
@@ -407,30 +387,31 @@ int lgw_gps_enable(char *tty_path, char *gps_family, speed_t target_brate, int *
 
     /* initialize global variables */
     gps_time_ok = true;
-    gps_pos_ok = false;
-    gps_mod = 'N';
-
+    gps_pos_ok = true;
+    gps_mod = 'N';    
     return LGW_GPS_SUCCESS;
 }
 
 /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
-int lgw_gps_disable(int fd) {
-    int i;
+int lgw_gps_disable(int fd) 
+{
+    //int i;
 
     /* restore serial ports parameters */
-    i = tcsetattr(fd, TCSANOW, &ttyopt_restore);
-    if (i != 0){
-        DEBUG_MSG("ERROR: IMPOSSIBLE TO RESTORE TTY PORT CONFIGURATION\n");
-        return LGW_GPS_ERROR;
-    }
-    tcflush(fd, TCIOFLUSH);
+    // i = tcsetattr(fd, TCSANOW, &ttyopt_restore);
+    // if (i != 0){
+    //     DEBUG_MSG("ERROR: IMPOSSIBLE TO RESTORE TTY PORT CONFIGURATION\n");
+    //     return LGW_GPS_ERROR;
+    // }
+    // tcflush(fd, TCIOFLUSH);
 
-    i = close(fd);
-    if (i <= 0) {
-        DEBUG_MSG("ERROR: TTY PORT FAIL TO CLOSE\n");
-        return LGW_GPS_ERROR;
-    }
+    // i = close(fd);
+    // if (i <= 0) {
+    //     DEBUG_MSG("ERROR: TTY PORT FAIL TO CLOSE\n");
+    //     return LGW_GPS_ERROR;
+    // }
+    gps_time_ok = false;
 
     return LGW_GPS_SUCCESS;
 }
@@ -438,209 +419,211 @@ int lgw_gps_disable(int fd) {
 /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
 enum gps_msg lgw_parse_ubx(const char *serial_buff, size_t buff_size, size_t *msg_size) {
-    bool valid = 0;    /* iTOW, fTOW and week validity */
-    unsigned int payload_length;
-    uint8_t ck_a, ck_b;
-    uint8_t ck_a_rcv, ck_b_rcv;
-    unsigned int i;
+//     bool valid = 0;    /* iTOW, fTOW and week validity */
+//     unsigned int payload_length;
+//     uint8_t ck_a, ck_b;
+//     uint8_t ck_a_rcv, ck_b_rcv;
+//     unsigned int i;
 
-    *msg_size = 0; /* ensure msg_size alway receives a value */
+//     *msg_size = 0; /* ensure msg_size alway receives a value */
 
-    /* check input parameters */
-    if (serial_buff == NULL) {
-        return IGNORED;
-    }
-    if (buff_size < 8) {
-        DEBUG_MSG("ERROR: TOO SHORT TO BE A VALID UBX MESSAGE\n");
-        return IGNORED;
-    }
+//     /* check input parameters */
+//     if (serial_buff == NULL) {
+//         return IGNORED;
+//     }
+//     if (buff_size < 8) {
+//         DEBUG_MSG("ERROR: TOO SHORT TO BE A VALID UBX MESSAGE\n");
+//         return IGNORED;
+//     }
 
-    /* display received serial data and checksum */
-    DEBUG_MSG("Note: parsing UBX frame> ");
-    for (i=0; i<buff_size; i++) {
-        DEBUG_MSG("%02x ", serial_buff[i]);
-    }
-    DEBUG_MSG("\n");
+//     /* display received serial data and checksum */
+//     DEBUG_MSG("Note: parsing UBX frame> ");
+//     for (i=0; i<buff_size; i++) {
+//         DEBUG_MSG("%02x ", serial_buff[i]);
+//     }
+//     DEBUG_MSG("\n");
 
-    /* Check for UBX sync chars 0xB5 0x62 */
-    if ((serial_buff[0] == (char)0xB5) && (serial_buff[1] == (char)0x62)) {
+//     /* Check for UBX sync chars 0xB5 0x62 */
+//     if ((serial_buff[0] == (char)0xB5) && (serial_buff[1] == (char)0x62)) {
 
-        /* Get payload length to compute message size */
-        payload_length  = (uint8_t)serial_buff[4];
-        payload_length |= (uint8_t)serial_buff[5] << 8;
-        *msg_size = 6 + payload_length + 2; /* header + payload + checksum */
+//         /* Get payload length to compute message size */
+//         payload_length  = (uint8_t)serial_buff[4];
+//         payload_length |= (uint8_t)serial_buff[5] << 8;
+//         *msg_size = 6 + payload_length + 2; /* header + payload + checksum */
 
-        /* check for complete message in buffer */
-        if(*msg_size <= buff_size) {
-            /* Validate checksum of message */
-            ck_a_rcv = serial_buff[*msg_size-2]; /* received checksum */
-            ck_b_rcv = serial_buff[*msg_size-1]; /* received checksum */
-            /* Use 8-bit Fletcher Algorithm to compute checksum of actual payload */
-            ck_a = 0; ck_b = 0;
-            for (i=0; i<(4 + payload_length); i++) {
-                ck_a = ck_a + serial_buff[i+2];
-                ck_b = ck_b + ck_a;
-            }
+//         /* check for complete message in buffer */
+//         if(*msg_size <= buff_size) {
+//             /* Validate checksum of message */
+//             ck_a_rcv = serial_buff[*msg_size-2]; /* received checksum */
+//             ck_b_rcv = serial_buff[*msg_size-1]; /* received checksum */
+//             /* Use 8-bit Fletcher Algorithm to compute checksum of actual payload */
+//             ck_a = 0; ck_b = 0;
+//             for (i=0; i<(4 + payload_length); i++) {
+//                 ck_a = ck_a + serial_buff[i+2];
+//                 ck_b = ck_b + ck_a;
+//             }
 
-            /* Compare checksums and parse if OK */
-            if ((ck_a == ck_a_rcv) && (ck_b == ck_b_rcv)) {
-                /* Check for Class 0x01 (NAV) and ID 0x20 (NAV-TIMEGPS) */
-                if ((serial_buff[2] == 0x01) && (serial_buff[3] == 0x20)) {
-                    /* Check validity of information */
-                    valid = serial_buff[17] & 0x3; /* towValid, weekValid */
-                    if (valid) {
-                        /* Parse buffer to extract GPS time */
-                        /* Warning: payload byte ordering is Little Endian */
-                        gps_iTOW =  (uint8_t)serial_buff[6];
-                        gps_iTOW |= (uint8_t)serial_buff[7] << 8;
-                        gps_iTOW |= (uint8_t)serial_buff[8] << 16;
-                        gps_iTOW |= (uint8_t)serial_buff[9] << 24; /* GPS time of week, in ms */
+//             /* Compare checksums and parse if OK */
+//             if ((ck_a == ck_a_rcv) && (ck_b == ck_b_rcv)) {
+//                 /* Check for Class 0x01 (NAV) and ID 0x20 (NAV-TIMEGPS) */
+//                 if ((serial_buff[2] == 0x01) && (serial_buff[3] == 0x20)) {
+//                     /* Check validity of information */
+//                     valid = serial_buff[17] & 0x3; /* towValid, weekValid */
+//                     if (valid) {
+//                         /* Parse buffer to extract GPS time */
+//                         /* Warning: payload byte ordering is Little Endian */
+//                         gps_iTOW =  (uint8_t)serial_buff[6];
+//                         gps_iTOW |= (uint8_t)serial_buff[7] << 8;
+//                         gps_iTOW |= (uint8_t)serial_buff[8] << 16;
+//                         gps_iTOW |= (uint8_t)serial_buff[9] << 24; /* GPS time of week, in ms */
 
-                        gps_fTOW =  (uint8_t)serial_buff[10];
-                        gps_fTOW |= (uint8_t)serial_buff[11] << 8;
-                        gps_fTOW |= (uint8_t)serial_buff[12] << 16;
-                        gps_fTOW |= (uint8_t)serial_buff[13] << 24; /* Fractional part of iTOW, in ns */
+//                         gps_fTOW =  (uint8_t)serial_buff[10];
+//                         gps_fTOW |= (uint8_t)serial_buff[11] << 8;
+//                         gps_fTOW |= (uint8_t)serial_buff[12] << 16;
+//                         gps_fTOW |= (uint8_t)serial_buff[13] << 24; /* Fractional part of iTOW, in ns */
 
-                        gps_week =  (uint8_t)serial_buff[14];
-                        gps_week |= (uint8_t)serial_buff[15] << 8; /* GPS week number */
+//                         gps_week =  (uint8_t)serial_buff[14];
+//                         gps_week |= (uint8_t)serial_buff[15] << 8; /* GPS week number */
 
-                        gps_time_ok = true;
-#if 0
-                        /* For debug */
-                        {
-                            short ubx_gps_hou = 0; /* hours (0-23) */
-                            short ubx_gps_min = 0; /* minutes (0-59) */
-                            short ubx_gps_sec = 0; /* seconds (0-59) */
+//                         gps_time_ok = true;
+// #if 0
+//                         /* For debug */
+//                         {
+//                             short ubx_gps_hou = 0; /* hours (0-23) */
+//                             short ubx_gps_min = 0; /* minutes (0-59) */
+//                             short ubx_gps_sec = 0; /* seconds (0-59) */
 
-                            /* Format GPS time in hh:mm:ss based on iTOW */
-                            ubx_gps_sec = (gps_iTOW / 1000) % 60;
-                            ubx_gps_min = (gps_iTOW / 1000 / 60) % 60;
-                            ubx_gps_hou = (gps_iTOW / 1000 / 60 / 60) % 24;
-                            printf("  GPS time = %02d:%02d:%02d\n", ubx_gps_hou, ubx_gps_min, ubx_gps_sec);
-                        }
-#endif
-                    } else { /* valid */
-                        gps_time_ok = false;
-                    }
+//                             /* Format GPS time in hh:mm:ss based on iTOW */
+//                             ubx_gps_sec = (gps_iTOW / 1000) % 60;
+//                             ubx_gps_min = (gps_iTOW / 1000 / 60) % 60;
+//                             ubx_gps_hou = (gps_iTOW / 1000 / 60 / 60) % 24;
+//                             printf("  GPS time = %02d:%02d:%02d\n", ubx_gps_hou, ubx_gps_min, ubx_gps_sec);
+//                         }
+// #endif
+//                     } else { /* valid */
+//                         gps_time_ok = false;
+//                     }
 
-                    return UBX_NAV_TIMEGPS;
-                } else if ((serial_buff[2] == 0x05) && (serial_buff[3] == 0x00)) {
-                    DEBUG_MSG("NOTE: UBX ACK-NAK received\n");
-                    return IGNORED;
-                } else if ((serial_buff[2] == 0x05) && (serial_buff[3] == 0x01)) {
-                    DEBUG_MSG("NOTE: UBX ACK-ACK received\n");
-                    return IGNORED;
-                } else { /* not a supported message */
-                    DEBUG_MSG("ERROR: UBX message is not supported (%02x %02x)\n", serial_buff[2], serial_buff[3]);
-                    return IGNORED;
-                }
-            } else { /* checksum failed */
-                DEBUG_MSG("ERROR: UBX message is corrupted, checksum failed\n");
-                return INVALID;
-            }
-        } else { /* message contains less bytes than indicated by header */
-            DEBUG_MSG("ERROR: UBX message incomplete\n");
-            return INCOMPLETE;
-        }
-    } else { /* Not a UBX message */
-        /* Ignore messages which are not UBX ones for now */
-        return IGNORED;
-    }
+//                     return UBX_NAV_TIMEGPS;
+//                 } else if ((serial_buff[2] == 0x05) && (serial_buff[3] == 0x00)) {
+//                     DEBUG_MSG("NOTE: UBX ACK-NAK received\n");
+//                     return IGNORED;
+//                 } else if ((serial_buff[2] == 0x05) && (serial_buff[3] == 0x01)) {
+//                     DEBUG_MSG("NOTE: UBX ACK-ACK received\n");
+//                     return IGNORED;
+//                 } else { /* not a supported message */
+//                     DEBUG_MSG("ERROR: UBX message is not supported (%02x %02x)\n", serial_buff[2], serial_buff[3]);
+//                     return IGNORED;
+//                 }
+//             } else { /* checksum failed */
+//                 DEBUG_MSG("ERROR: UBX message is corrupted, checksum failed\n");
+//                 return INVALID;
+//             }
+//         } else { /* message contains less bytes than indicated by header */
+//             DEBUG_MSG("ERROR: UBX message incomplete\n");
+//             return INCOMPLETE;
+//         }
+//     } else { /* Not a UBX message */
+//         /* Ignore messages which are not UBX ones for now */
+//         return IGNORED;
+//     }
+return UBX_NAV_TIMEGPS;
 }
 
 /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
 enum gps_msg lgw_parse_nmea(const char *serial_buff, int buff_size) {
-    int i, j, k;
-    int str_index[30]; /* string index from the string chopping */
-    int nb_fields; /* number of strings detected by string chopping */
-    char parser_buf[256]; /* parsing modifies buffer so need a local copy */
+    // int i, j, k;
+    // int str_index[30]; /* string index from the string chopping */
+    // int nb_fields; /* number of strings detected by string chopping */
+    // char parser_buf[256]; /* parsing modifies buffer so need a local copy */
 
-    /* check input parameters */
-    if (serial_buff == NULL) {
-        return UNKNOWN;
-    }
+    // /* check input parameters */
+    // if (serial_buff == NULL) {
+    //     return UNKNOWN;
+    // }
 
-    if(buff_size > (int)(sizeof(parser_buf) - 1)) {
-        DEBUG_MSG("Note: input string to big for parsing\n");
-        return INVALID;
-    }
+    // if(buff_size > (int)(sizeof(parser_buf) - 1)) {
+    //     DEBUG_MSG("Note: input string to big for parsing\n");
+    //     return INVALID;
+    // }
 
-    /* look for some NMEA sentences in particular */
-    if (buff_size < 8) {
-        DEBUG_MSG("ERROR: TOO SHORT TO BE A VALID NMEA SENTENCE\n");
-        return UNKNOWN;
-    } else if (!validate_nmea_checksum(serial_buff, buff_size)) {
-        DEBUG_MSG("Warning: invalid NMEA sentence (bad checksum)\n");
-        return INVALID;
-    } else if (match_label(serial_buff, "$G?RMC", 6, '?')) {
-        /*
-        NMEA sentence format: $xxRMC,time,status,lat,NS,long,EW,spd,cog,date,mv,mvEW,posMode*cs<CR><LF>
-        Valid fix: $GPRMC,083559.34,A,4717.11437,N,00833.91522,E,0.004,77.52,091202,,,A*00
-        No fix: $GPRMC,,V,,,,,,,,,,N*00
-        */
-        memcpy(parser_buf, serial_buff, buff_size);
-        parser_buf[buff_size] = '\0';
-        nb_fields = str_chop(parser_buf, buff_size, ',', str_index, ARRAY_SIZE(str_index));
-        if (nb_fields != 13) {
-            DEBUG_MSG("Warning: invalid RMC sentence (number of fields)\n");
-            return IGNORED;
-        }
-        /* parse GPS status */
-        gps_mod = *(parser_buf + str_index[12]); /* get first character, no need to bother with sscanf */
-        if ((gps_mod != 'N') && (gps_mod != 'A') && (gps_mod != 'D')) {
-            gps_mod = 'N';
-        }
-        /* parse complete time */
-        i = sscanf(parser_buf + str_index[1], "%2hd%2hd%2hd%4f", &gps_hou, &gps_min, &gps_sec, &gps_fra);
-        j = sscanf(parser_buf + str_index[9], "%2hd%2hd%2hd", &gps_day, &gps_mon, &gps_yea);
-        if ((i == 4) && (j == 3)) {
-            if ((gps_mod == 'A') || (gps_mod == 'D')) {
-                gps_time_ok = true;
-                DEBUG_MSG("Note: Valid RMC sentence, GPS locked, date: 20%02d-%02d-%02dT%02d:%02d:%06.3fZ\n", gps_yea, gps_mon, gps_day, gps_hou, gps_min, gps_fra + (float)gps_sec);
-            } else {
-                gps_time_ok = false;
-                DEBUG_MSG("Note: Valid RMC sentence, no satellite fix, estimated date: 20%02d-%02d-%02dT%02d:%02d:%06.3fZ\n", gps_yea, gps_mon, gps_day, gps_hou, gps_min, gps_fra + (float)gps_sec);
-            }
-        } else {
-            /* could not get a valid hour AND date */
-            gps_time_ok = false;
-            DEBUG_MSG("Note: Valid RMC sentence, mode %c, no date\n", gps_mod);
-        }
-        return NMEA_RMC;
-    } else if (match_label(serial_buff, "$G?GGA", 6, '?')) {
-        /*
-        NMEA sentence format: $xxGGA,time,lat,NS,long,EW,quality,numSV,HDOP,alt,M,sep,M,diffAge,diffStation*cs<CR><LF>
-        Valid fix: $GPGGA,092725.00,4717.11399,N,00833.91590,E,1,08,1.01,499.6,M,48.0,M,,*5B
-        */
-        memcpy(parser_buf, serial_buff, buff_size);
-        parser_buf[buff_size] = '\0';
-        nb_fields = str_chop(parser_buf, buff_size, ',', str_index, ARRAY_SIZE(str_index));
-        if (nb_fields != 15) {
-            DEBUG_MSG("Warning: invalid GGA sentence (number of fields)\n");
-            return IGNORED;
-        }
-        /* parse number of satellites used for fix */
-        sscanf(parser_buf + str_index[7], "%hd", &gps_sat);
-        /* parse 3D coordinates */
-        i = sscanf(parser_buf + str_index[2], "%2hd%10lf", &gps_dla, &gps_mla);
-        gps_ola = *(parser_buf + str_index[3]);
-        j = sscanf(parser_buf + str_index[4], "%3hd%10lf", &gps_dlo, &gps_mlo);
-        gps_olo = *(parser_buf + str_index[5]);
-        k = sscanf(parser_buf + str_index[9], "%hd", &gps_alt);
-        if ((i == 2) && (j == 2) && (k == 1) && ((gps_ola=='N')||(gps_ola=='S')) && ((gps_olo=='E')||(gps_olo=='W'))) {
-            gps_pos_ok = true;
-            DEBUG_MSG("Note: Valid GGA sentence, %d sat, lat %02ddeg %06.3fmin %c, lon %03ddeg%06.3fmin %c, alt %d\n", gps_sat, gps_dla, gps_mla, gps_ola, gps_dlo, gps_mlo, gps_olo, gps_alt);
-        } else {
-            /* could not get a valid latitude, longitude AND altitude */
-            gps_pos_ok = false;
-            DEBUG_MSG("Note: Valid GGA sentence, %d sat, no coordinates\n", gps_sat);
-        }
-        return NMEA_GGA;
-    } else {
-        DEBUG_MSG("Note: ignored NMEA sentence\n"); /* quite verbose */
-        return IGNORED;
-    }
+    // /* look for some NMEA sentences in particular */
+    // if (buff_size < 8) {
+    //     DEBUG_MSG("ERROR: TOO SHORT TO BE A VALID NMEA SENTENCE\n");
+    //     return UNKNOWN;
+    // } else if (!validate_nmea_checksum(serial_buff, buff_size)) {
+    //     DEBUG_MSG("Warning: invalid NMEA sentence (bad checksum)\n");
+    //     return INVALID;
+    // } else if (match_label(serial_buff, "$G?RMC", 6, '?')) {
+    //     /*
+    //     NMEA sentence format: $xxRMC,time,status,lat,NS,long,EW,spd,cog,date,mv,mvEW,posMode*cs<CR><LF>
+    //     Valid fix: $GPRMC,083559.34,A,4717.11437,N,00833.91522,E,0.004,77.52,091202,,,A*00
+    //     No fix: $GPRMC,,V,,,,,,,,,,N*00
+    //     */
+    //     memcpy(parser_buf, serial_buff, buff_size);
+    //     parser_buf[buff_size] = '\0';
+    //     nb_fields = str_chop(parser_buf, buff_size, ',', str_index, ARRAY_SIZE(str_index));
+    //     if (nb_fields != 13) {
+    //         DEBUG_MSG("Warning: invalid RMC sentence (number of fields)\n");
+    //         return IGNORED;
+    //     }
+    //     /* parse GPS status */
+    //     gps_mod = *(parser_buf + str_index[12]); /* get first character, no need to bother with sscanf */
+    //     if ((gps_mod != 'N') && (gps_mod != 'A') && (gps_mod != 'D')) {
+    //         gps_mod = 'N';
+    //     }
+    //     /* parse complete time */
+    //     i = sscanf(parser_buf + str_index[1], "%2hd%2hd%2hd%4f", &gps_hou, &gps_min, &gps_sec, &gps_fra);
+    //     j = sscanf(parser_buf + str_index[9], "%2hd%2hd%2hd", &gps_day, &gps_mon, &gps_yea);
+    //     if ((i == 4) && (j == 3)) {
+    //         if ((gps_mod == 'A') || (gps_mod == 'D')) {
+    //             gps_time_ok = true;
+    //             DEBUG_MSG("Note: Valid RMC sentence, GPS locked, date: 20%02d-%02d-%02dT%02d:%02d:%06.3fZ\n", gps_yea, gps_mon, gps_day, gps_hou, gps_min, gps_fra + (float)gps_sec);
+    //         } else {
+    //             gps_time_ok = false;
+    //             DEBUG_MSG("Note: Valid RMC sentence, no satellite fix, estimated date: 20%02d-%02d-%02dT%02d:%02d:%06.3fZ\n", gps_yea, gps_mon, gps_day, gps_hou, gps_min, gps_fra + (float)gps_sec);
+    //         }
+    //     } else {
+    //         /* could not get a valid hour AND date */
+    //         gps_time_ok = false;
+    //         DEBUG_MSG("Note: Valid RMC sentence, mode %c, no date\n", gps_mod);
+    //     }
+    //     return NMEA_RMC;
+    // } else if (match_label(serial_buff, "$G?GGA", 6, '?')) {
+    //     /*
+    //     NMEA sentence format: $xxGGA,time,lat,NS,long,EW,quality,numSV,HDOP,alt,M,sep,M,diffAge,diffStation*cs<CR><LF>
+    //     Valid fix: $GPGGA,092725.00,4717.11399,N,00833.91590,E,1,08,1.01,499.6,M,48.0,M,,*5B
+    //     */
+    //     memcpy(parser_buf, serial_buff, buff_size);
+    //     parser_buf[buff_size] = '\0';
+    //     nb_fields = str_chop(parser_buf, buff_size, ',', str_index, ARRAY_SIZE(str_index));
+    //     if (nb_fields != 15) {
+    //         DEBUG_MSG("Warning: invalid GGA sentence (number of fields)\n");
+    //         return IGNORED;
+    //     }
+    //     /* parse number of satellites used for fix */
+    //     sscanf(parser_buf + str_index[7], "%hd", &gps_sat);
+    //     /* parse 3D coordinates */
+    //     i = sscanf(parser_buf + str_index[2], "%2hd%10lf", &gps_dla, &gps_mla);
+    //     gps_ola = *(parser_buf + str_index[3]);
+    //     j = sscanf(parser_buf + str_index[4], "%3hd%10lf", &gps_dlo, &gps_mlo);
+    //     gps_olo = *(parser_buf + str_index[5]);
+    //     k = sscanf(parser_buf + str_index[9], "%hd", &gps_alt);
+    //     if ((i == 2) && (j == 2) && (k == 1) && ((gps_ola=='N')||(gps_ola=='S')) && ((gps_olo=='E')||(gps_olo=='W'))) {
+    //         gps_pos_ok = true;
+    //         DEBUG_MSG("Note: Valid GGA sentence, %d sat, lat %02ddeg %06.3fmin %c, lon %03ddeg%06.3fmin %c, alt %d\n", gps_sat, gps_dla, gps_mla, gps_ola, gps_dlo, gps_mlo, gps_olo, gps_alt);
+    //     } else {
+    //         /* could not get a valid latitude, longitude AND altitude */
+    //         gps_pos_ok = false;
+    //         DEBUG_MSG("Note: Valid GGA sentence, %d sat, no coordinates\n", gps_sat);
+    //     }
+    //     return NMEA_GGA;
+    // } else {
+    //     DEBUG_MSG("Note: ignored NMEA sentence\n"); /* quite verbose */
+    //     return IGNORED;
+    // }
+    return NMEA_GGA;
 }
 
 /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
@@ -648,53 +631,54 @@ enum gps_msg lgw_parse_nmea(const char *serial_buff, int buff_size) {
 int lgw_gps_get(struct timespec *utc, struct timespec *gps_time, struct coord_s *loc, struct coord_s *err) {
     struct tm x;
     time_t y;
-    double intpart, fractpart;
-
+    double intpart, fractpart;       
+    uint64_t current_time = gTVStart.tv_sec*1000000+gTVStart.tv_usec+gLabscimTime;
+        
     if (utc != NULL) {
         if (!gps_time_ok) {
             DEBUG_MSG("ERROR: NO VALID TIME TO RETURN\n");
             return LGW_GPS_ERROR;
         }
-        memset(&x, 0, sizeof(x));
-        if (gps_yea < 100) { /* 2-digits year, 20xx */
-            x.tm_year = gps_yea + 100; /* 100 years offset to 1900 */
-        } else { /* 4-digits year, Gregorian calendar */
-            x.tm_year = gps_yea - 1900;
-        }
-        x.tm_mon = gps_mon - 1; /* tm_mon is [0,11], gps_mon is [1,12] */
-        x.tm_mday = gps_day;
-        x.tm_hour = gps_hou;
-        x.tm_min = gps_min;
-        x.tm_sec = gps_sec;
-        y = mktime(&x) - timezone; /* need to substract timezone bc mktime assumes time vector is local time */
-        if (y == (time_t)(-1)) {
-            DEBUG_MSG("ERROR: FAILED TO CONVERT BROKEN-DOWN TIME\n");
-            return LGW_GPS_ERROR;
-        }
-        utc->tv_sec = y;
-        utc->tv_nsec = (int32_t)(gps_fra * 1e9);
+        //memset(&x, 0, sizeof(x));
+        //if (gps_yea < 100) { /* 2-digits year, 20xx */
+        //    x.tm_year = gps_yea + 100; /* 100 years offset to 1900 */
+        //} else { /* 4-digits year, Gregorian calendar */
+        //    x.tm_year = gps_yea - 1900;
+        //}
+        // x.tm_mon = gps_mon - 1; /* tm_mon is [0,11], gps_mon is [1,12] */
+        //x.tm_mday = gps_day;
+        //x.tm_hour = gps_hou;
+        //x.tm_min = gps_min;
+        //x.tm_sec = gps_sec;
+        //y = mktime(&x) - timezone; /* need to substract timezone bc mktime assumes time vector is local time */
+        //if (y == (time_t)(-1)) {
+        //    DEBUG_MSG("ERROR: FAILED TO CONVERT BROKEN-DOWN TIME\n");
+        //    return LGW_GPS_ERROR;
+        //}
+        utc->tv_sec = current_time/1000000;
+        utc->tv_nsec = (current_time%1000000)*1000;
     }
     if (gps_time != NULL) {
         if (!gps_time_ok) {
             DEBUG_MSG("ERROR: NO VALID TIME TO RETURN\n");
             return LGW_GPS_ERROR;
         }
-        fractpart = modf(((double)gps_iTOW / 1E3) + ((double)gps_fTOW / 1E9), &intpart);
+        //fractpart = modf(((double)gps_iTOW / 1E3) + ((double)gps_fTOW / 1E9), &intpart);
         /* Number of seconds since beginning on current GPS week */
-        gps_time->tv_sec = (time_t)intpart;
+        gps_time->tv_sec = (current_time/1000000) - 315964800;
         /* Number of seconds since GPS epoch 06.Jan.1980 */
-        gps_time->tv_sec += (time_t)gps_week * 604800; /* day*hours*minutes*secondes: 7*24*60*60; */
+        //gps_time->tv_sec += (time_t)gps_week * 604800; /* day*hours*minutes*secondes: 7*24*60*60; */
         /* Fractional part in nanoseconds */
-        gps_time->tv_nsec = (long)(fractpart * 1E9);
+        gps_time->tv_nsec = (current_time%1000000)*1000;
     }
     if (loc != NULL) {
         if (!gps_pos_ok) {
             DEBUG_MSG("ERROR: NO VALID POSITION TO RETURN\n");
             return LGW_GPS_ERROR;
         }
-        loc->lat = ((double)gps_dla + (gps_mla/60.0)) * ((gps_ola == 'N')?1.0:-1.0);
-        loc->lon = ((double)gps_dlo + (gps_mlo/60.0)) * ((gps_olo == 'E')?1.0:-1.0);
-        loc->alt = gps_alt;
+        loc->lat = gGPSLatitude_deg;
+        loc->lon = gGPSLongitude_deg;
+        loc->alt = gGPSAltitude_m;
     }
     if (err != NULL) {
         DEBUG_MSG("Warning: localization error processing not implemented yet\n");
@@ -702,13 +686,12 @@ int lgw_gps_get(struct timespec *utc, struct timespec *gps_time, struct coord_s 
         err->lon = 0.0;
         err->alt = 0;
     }
-
     return LGW_GPS_SUCCESS;
 }
 
 /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
-int lgw_gps_sync(struct tref *ref, uint32_t count_us, struct timespec utc, struct timespec gps_time) {
+int lgw_gps_sync(struct tref *ref, uint64_t count_us, struct timespec utc, struct timespec gps_time) {
     //double cnt_diff; /* internal concentrator time difference (in seconds) */
     //double utc_diff; /* UTC time difference (in seconds) */
     //double slope; /* time slope between new reference and old reference (for sanity check) */
@@ -741,7 +724,7 @@ int lgw_gps_sync(struct tref *ref, uint32_t count_us, struct timespec utc, struc
     /* watch if the 3 latest sync point were aberrant or not */
     //if (aber_n0 == false) {
         /* value no aberrant -> sync with smoothed slope */
-        ref->systime = labscim_systime + gLabscimTime/1000000;
+        ref->systime = utc.tv_sec;
         ref->count_us = count_us;
         ref->utc.tv_sec = utc.tv_sec;
         ref->utc.tv_nsec = utc.tv_nsec;
@@ -781,9 +764,11 @@ int lgw_gps_sync(struct tref *ref, uint32_t count_us, struct timespec utc, struc
 /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
 int lgw_cnt2utc(struct tref ref, uint32_t count_us, struct timespec *utc) {
-    double delta_sec;
-    double intpart, fractpart;
-    long tmp;
+    //double delta_sec;
+    //double intpart, fractpart;
+    //long tmp;
+    uint64_t time = gTVStart.tv_sec*1000000+gTVStart.tv_usec+count_us+(gLabscimTime&0xFFFFFFFF00000000);
+    
 
     CHECK_NULL(utc);
     if ((ref.systime == 0) || (ref.xtal_err > PLUS_10PPM) || (ref.xtal_err < MINUS_10PPM)) {
@@ -792,26 +777,30 @@ int lgw_cnt2utc(struct tref ref, uint32_t count_us, struct timespec *utc) {
     }
 
     /* calculate delta in seconds between reference count_us and target count_us */
-    delta_sec = (double)(count_us - ref.count_us) / (TS_CPS * ref.xtal_err);
+    //delta_sec = (double)(count_us - ref.count_us) / (TS_CPS * ref.xtal_err);
 
     /* now add that delta to reference UTC time */
-    fractpart = modf (delta_sec , &intpart);
-    tmp = ref.utc.tv_nsec + (long)(fractpart * 1E9);
-    if (tmp < (long)1E9) { /* the nanosecond part doesn't overflow */
-        utc->tv_sec = ref.utc.tv_sec + (time_t)intpart;
-        utc->tv_nsec = tmp;
-    } else { /* must carry one second */
-        utc->tv_sec = ref.utc.tv_sec + (time_t)intpart + 1;
-        utc->tv_nsec = tmp - (long)1E9;
-    }
+    //fractpart = modf (delta_sec , &intpart);
+    //tmp = ref.utc.tv_nsec + (long)(fractpart * 1E9);
+    //if (tmp < (long)1E9) { /* the nanosecond part doesn't overflow */
+    //    utc->tv_sec = ref.utc.tv_sec + (time_t)intpart;
+    //    utc->tv_nsec = tmp;
+    //} else { /* must carry one second */
+    //    utc->tv_sec = ref.utc.tv_sec + (time_t)intpart + 1;
+    //    utc->tv_nsec = tmp - (long)1E9;
+    //}
+    utc->tv_sec = time/1000000;
+    utc->tv_nsec = (time%1000000)*1000;
+    
 
     return LGW_GPS_SUCCESS;
 }
 
 /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
-int lgw_utc2cnt(struct tref ref, struct timespec utc, uint32_t *count_us) {
-    double delta_sec;
+int lgw_utc2cnt(struct tref ref, struct timespec utc, uint32_t *count_us) 
+{
+    //double delta_sec;
 
     CHECK_NULL(count_us);
     if ((ref.systime == 0) || (ref.xtal_err > PLUS_10PPM) || (ref.xtal_err < MINUS_10PPM)) {
@@ -820,22 +809,24 @@ int lgw_utc2cnt(struct tref ref, struct timespec utc, uint32_t *count_us) {
     }
 
     /* calculate delta in seconds between reference utc and target utc */
-    delta_sec = (double)(utc.tv_sec - ref.utc.tv_sec);
-    delta_sec += 1E-9 * (double)(utc.tv_nsec - ref.utc.tv_nsec);
+    //delta_sec = (double)(utc.tv_sec - ref.utc.tv_sec);
+    //delta_sec += 1E-9 * (double)(utc.tv_nsec - ref.utc.tv_nsec);
 
     /* now convert that to internal counter tics and add that to reference counter value */
-    *count_us = ref.count_us + (uint32_t)(delta_sec * TS_CPS * ref.xtal_err);
-
+    //*count_us = ref.count_us + (uint32_t)(delta_sec * TS_CPS * ref.xtal_err);
+    *count_us = (utc.tv_sec*1000000+utc.tv_nsec/1000)-(gTVStart.tv_sec*1000000+gTVStart.tv_usec);
     return LGW_GPS_SUCCESS;
 }
 
 /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
-int lgw_cnt2gps(struct tref ref, uint32_t count_us, struct timespec *gps_time) {
-    double delta_sec;
-    double intpart, fractpart;
-    long tmp;
+int lgw_cnt2gps(struct tref ref, uint32_t count_us, struct timespec *gps_time)
+ {
+    //double delta_sec;
+    //double intpart, fractpart;
+    //long tmp;
 
+    uint64_t time = gTVStart.tv_sec*1000000+gTVStart.tv_usec+count_us+(gLabscimTime&0xFFFFFFFF00000000);
     CHECK_NULL(gps_time);
     if ((ref.systime == 0) || (ref.xtal_err > PLUS_10PPM) || (ref.xtal_err < MINUS_10PPM)) {
         DEBUG_MSG("ERROR: INVALID REFERENCE FOR CNT -> GPS CONVERSION\n");
@@ -843,19 +834,23 @@ int lgw_cnt2gps(struct tref ref, uint32_t count_us, struct timespec *gps_time) {
     }
 
     /* calculate delta in milliseconds between reference count_us and target count_us */
-    delta_sec = (double)(count_us - ref.count_us) / (TS_CPS * ref.xtal_err);
+    //delta_sec = (double)(count_us - ref.count_us) / (TS_CPS * ref.xtal_err);
 
     /* now add that delta to reference GPS time */
-    fractpart = modf (delta_sec , &intpart);
-    tmp = ref.gps.tv_nsec + (long)(fractpart * 1E9);
-    if (tmp < (long)1E9) { /* the nanosecond part doesn't overflow */
-        gps_time->tv_sec = ref.gps.tv_sec + (time_t)intpart;
-        gps_time->tv_nsec = tmp;
-    } else { /* must carry one second */
-        gps_time->tv_sec = ref.gps.tv_sec + (time_t)intpart + 1;
-        gps_time->tv_nsec = tmp - (long)1E9;
-    }
+    //fractpart = modf (delta_sec , &intpart);
+    //tmp = ref.gps.tv_nsec + (long)(fractpart * 1E9);
+    //if (tmp < (long)1E9) { /* the nanosecond part doesn't overflow */
+    //    gps_time->tv_sec = ref.gps.tv_sec + (time_t)intpart;
+    //    gps_time->tv_nsec = tmp;
+    //} else { /* must carry one second */
+    //    gps_time->tv_sec = ref.gps.tv_sec + (time_t)intpart + 1;
+    //    gps_time->tv_nsec = tmp - (long)1E9;
+    //}
 
+    gps_time->tv_sec = (time / 1000000) - 315964800;
+    /* Number of seconds since GPS epoch 06.Jan.1980 */
+    /* Fractional part in nanoseconds */
+    gps_time->tv_nsec = (time % 1000000) * 1000;
     return LGW_GPS_SUCCESS;
 }
 
@@ -869,14 +864,15 @@ int lgw_gps2cnt(struct tref ref, struct timespec gps_time, uint32_t *count_us) {
         DEBUG_MSG("ERROR: INVALID REFERENCE FOR GPS -> CNT CONVERSION\n");
         return LGW_GPS_ERROR;
     }
-
     /* calculate delta in seconds between reference gps time and target gps time */
-    delta_sec = (double)(gps_time.tv_sec - ref.gps.tv_sec);
-    delta_sec += 1E-9 * (double)(gps_time.tv_nsec - ref.gps.tv_nsec);
+    //delta_sec = (double)(gps_time.tv_sec - ref.gps.tv_sec);
+    //delta_sec += 1E-9 * (double)(gps_time.tv_nsec - ref.gps.tv_nsec);
 
     /* now convert that to internal counter tics and add that to reference counter value */
-    *count_us = ref.count_us + (uint32_t)(delta_sec * TS_CPS * ref.xtal_err);
+    //*count_us = ref.count_us + (uint32_t)(delta_sec * TS_CPS * ref.xtal_err)
 
+    
+    *count_us = (gps_time.tv_sec*1000000+gps_time.tv_nsec/1000)+315964800000000-(gTVStart.tv_sec*1000000+gTVStart.tv_usec);
     return LGW_GPS_SUCCESS;
 }
 

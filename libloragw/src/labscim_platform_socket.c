@@ -1,5 +1,6 @@
 //labscim related structures
 #include <stdarg.h>
+#include <sys/time.h>
 #include "labscim_linked_list.h"
 #include "labscim_protocol.h"
 #include "labscim_socket.h"
@@ -23,6 +24,12 @@ uint32_t gProcessing=0;
 uint8_t gMQTTAddress[48];
 uint8_t gMQTTTopic[128];
 
+double gGPSLatitude_deg=0;
+double gGPSLongitude_deg=0;
+double gGPSAltitude_m=0;
+
+struct timeval gTVStart = {0,0};
+
 uint8_t mac_addr[] = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08 };
 
 extern pthread_mutex_t gWaitingCommandsMutex;
@@ -33,6 +40,7 @@ extern struct labscim_ll gThreadCommands;
 uint8_t gByteBuffer[DBG_PRINT_BUFFER_SIZE];
 
 void labscim_set_time(uint64_t time);
+void labscim_signal_arrived(struct labscim_signal* sig);
 
 
 void labscim_protocol_boot(struct labscim_protocol_boot* msg)
@@ -42,6 +50,13 @@ void labscim_protocol_boot(struct labscim_protocol_boot* msg)
 	labscim_set_time(cns->startup_time);
 	gBootReceived = 1;
     gCommandLabscimLog = cns->labscim_log_master;
+    gGPSAltitude_m = cns->alt_m;
+    gGPSLatitude_deg = cns->lat_deg;
+    gGPSLongitude_deg = cns->lon_deg;
+
+    gTVStart.tv_sec = cns->TimeReference / 1000000;
+    gTVStart.tv_usec = cns->TimeReference % 1000000;
+
     strcpy(gMQTTAddress,cns->MQTTLoggerAddress);
     strcpy(gMQTTTopic,cns->MQTTLoggerApplicationTopic);
 	free(msg);
@@ -92,6 +107,21 @@ int socket_process_command(struct labscim_protocol_header *hdr)
 #endif
         labscim_set_time(((struct labscim_radio_response *)(hdr))->current_time);
         labscim_radio_incoming_response((struct labscim_radio_response *)(hdr));
+        break;
+    }
+    case LABSCIM_SIGNAL:
+    {
+        labscim_set_time(((struct labscim_signal *)(hdr))->current_time);
+        labscim_signal_arrived((struct labsim_signal *)(hdr));
+        break;
+    }
+    case LABSCIM_END:
+    {
+#ifdef LABSCIM_LOG_COMMANDS
+        sprintf(log, "seq%4d\tEND\n", hdr->sequence_number);
+        labscim_log(log, "pro ");
+#endif
+        exit(0);
         break;
     }
     default:

@@ -32,7 +32,7 @@ Maintainer: Sylvain Miermont
 #include "loragw_radio.h"
 #include "loragw_fpga.h"
 #include "loragw_lbt.h"
-#include "sx126x_labscim.h"
+#include "labscim_sx126x.h"
 
 /*----------------
 LABSCIM
@@ -52,6 +52,7 @@ extern uint8_t mac_addr[];
 
 /*LabSCim MQTT result collector*/
 #include "MQTTAsync.h"
+#include "MQTTClient.h"
 
 void mqtt_onSubscribeFailure(void* context, MQTTAsync_failureData* response);
 void mqtt_onSubscribe(void* context, MQTTAsync_successData* response);
@@ -62,23 +63,48 @@ int mqtt_msgarrvd(void *context, char *topicName, int topicLen, MQTTAsync_messag
 void mqtt_onSend(void* context, MQTTAsync_successData* response);
 void mqtt_onConnect(void* context, MQTTAsync_successData* response);
 
-
+#define MAX_NODES (256)
+uint64_t gLastRcvMsgGenerationTime[MAX_NODES];
+uint64_t gLastRcvMsgReceptionTime[MAX_NODES];
+uint64_t gAoIMaxSignal;
+uint64_t gAoIMinSignal;
+uint64_t gAoIAreaSignal;
 
 extern uint8_t gMQTTAddress[48];
 extern uint8_t gMQTTTopic[128];
 
-#define CLIENTID    "LabSCim gateway"
+#define CLIENTID    "LabSCimGateway"
 #define QOS         1
 #define TIMEOUT     10000L
 
-uint64_t gPacketGeneratedSignal;
 uint64_t gPacketLatencySignal;
 uint64_t gPacketErrorSignal;
+uint64_t gPacketReceivedSignal;
+uint64_t gDownstreamPacket;
+
+struct signal_info
+{
+	uint64_t signature;	
+    double error;
+	double latency;
+	double aoi_max;
+	double aoi_min;
+	double aoi_area;    
+} __attribute__((packed));
+
+struct packet_generated_info
+{
+	uint64_t signature;	
+    uint64_t labscim_time;	
+} __attribute__((packed));
 
 pthread_mutex_t gEmitListMutex = PTHREAD_MUTEX_INITIALIZER;
 struct labscim_ll gEmitSignalList;
 
+pthread_mutex_t gDownstreamListMutex = PTHREAD_MUTEX_INITIALIZER;
+struct labscim_ll gDownstreamSignalList;
 
+uint64_t gSignature=0;
 
 
 volatile bool lib_exit_sig = false; /* 1 -> application terminates cleanly (shut down hardware, close open files, etc) */
@@ -236,19 +262,44 @@ int32_t lgw_bw_getval(int x);
 
 void EmitAndYield()
 {
-    struct signal_emit* em;
+    struct signal_info *si;
+    struct packet_generated_info* pg;
     pthread_mutex_lock(&gEmitListMutex);
-    em = labscim_ll_pop_front(&gEmitSignalList);
-    while(em!=NULL)
+    si = (struct signal_info *)labscim_ll_pop_front(&gEmitSignalList);
+    while (si != NULL)
     {
-        LabscimSignalEmit(em->id,em->value);
-        free(em);
-        em = labscim_ll_pop_front(&gEmitSignalList);
+        LabscimSignalEmitChar(gPacketReceivedSignal, (char *)si, sizeof(struct signal_info));
+        //LabscimSignalEmitChar(gDownstreamPacket, (char *)si, sizeof(struct signal_info));
+        free(si);
+        si = (struct signal_info *)labscim_ll_pop_front(&gEmitSignalList);
     }
     pthread_mutex_unlock(&gEmitListMutex);
+    
+    //*
+    pthread_mutex_lock(&gDownstreamListMutex);
+    pg = (struct packet_generated_info *)labscim_ll_pop_front(&gDownstreamSignalList);
+    while (pg != NULL)
+    {
+        LabscimSignalEmitChar(gDownstreamPacket, (char *)pg, sizeof(struct packet_generated_info));
+        free(pg);
+        pg = (struct packet_generated_info *)labscim_ll_pop_front(&gDownstreamSignalList);
+    }
+    pthread_mutex_unlock(&gDownstreamListMutex);
     protocol_yield(gNodeOutputBuffer);
+    //*/
+    /*
+    pthread_mutex_lock(&gDownstreamListMutex);
+    si = (struct signal_info *)labscim_ll_pop_front(&gDownstreamSignalList);
+    while (si != NULL)
+    {
+        LabscimSignalEmitChar(gDownstreamPacket, (char *)si, sizeof(struct signal_info));
+        free(si);
+        si = (struct signal_info *)labscim_ll_pop_front(&gDownstreamSignalList);
+    }
+    pthread_mutex_unlock(&gDownstreamListMutex);
+    protocol_yield(gNodeOutputBuffer);
+    */
 }
-
 
 /* size is the firmware size in bytes (not 14b words) */
 int load_firmware(uint8_t target, uint8_t *firmware, uint16_t size)
@@ -949,6 +1000,64 @@ void mqtt_onSend(void* context, MQTTAsync_successData* response)
     printf("Message with token value %d delivery confirmed\n", response->token);
 }
 
+void schedule_for_downstream(struct packet_generated_info* pg)
+//void schedule_for_downstream(struct signal_info* si)
+{
+    ///*
+    struct packet_generated_info* pg_new;
+    pg_new = (struct packet_generated_info*)malloc(sizeof(struct packet_generated_info));
+    memcpy(pg_new, pg, sizeof(struct packet_generated_info));
+    pthread_mutex_lock(&gDownstreamListMutex);
+    labscim_ll_insert_at_back(&gDownstreamSignalList, (void *)pg_new);
+    pthread_mutex_unlock(&gDownstreamListMutex);
+    //*/
+    /*
+    struct signal_info* sig;
+    sig = (struct signal_info *)malloc(sizeof(struct signal_info));
+    memcpy(sig, si, sizeof(struct signal_info));
+    pthread_mutex_lock(&gDownstreamListMutex);
+    labscim_ll_insert_at_back(&gDownstreamSignalList, (void *)sig);
+    pthread_mutex_unlock(&gDownstreamListMutex);
+    */
+}
+
+void schedule_for_emission(struct signal_info* si)
+{
+    struct signal_info* sig;
+    sig = (struct signal_info *)malloc(sizeof(struct signal_info));
+    memcpy(sig, si, sizeof(struct signal_info));
+    pthread_mutex_lock(&gEmitListMutex);
+    labscim_ll_insert_at_back(&gEmitSignalList, (void *)sig);
+    pthread_mutex_unlock(&gEmitListMutex);
+}
+
+
+void aoi(uint8_t index, uint8_t* data, struct signal_info* info)
+{
+	uint64_t* time = (uint64_t*)data;
+    
+	if( gLastRcvMsgReceptionTime[ index ] > 0)
+	{
+		float LastAoiMin = ((float)(gLastRcvMsgReceptionTime[index] - gLastRcvMsgGenerationTime[index]))/1e6;
+		float AoIMin = (gLabscimTime-time[0])/1e6;
+		float AoIMax = (gLabscimTime-gLastRcvMsgGenerationTime[ index ])/1e6;
+		float AoIBase = ( (float)(gLabscimTime-gLastRcvMsgGenerationTime[ index ]) )/1e6;
+		float AoIArea = AoIBase * ((AoIMax + LastAoiMin)/2);
+		float offset = (float)(index<<24);    
+        info->aoi_min = AoIMin;
+        info->aoi_max = AoIMax;
+        info->aoi_area = AoIArea;   
+	}
+    else
+    {
+        info->aoi_min = NAN;
+        info->aoi_max = NAN;
+        info->aoi_area = NAN;       
+    }
+	gLastRcvMsgGenerationTime[ index ] = time[0];
+	gLastRcvMsgReceptionTime[ index ] = gLabscimTime;
+}
+
 int mqtt_msgarrvd(void *context, char *topicName, int topicLen, MQTTAsync_message *message)
 {
     JSON_Value *root_val;
@@ -974,12 +1083,17 @@ int mqtt_msgarrvd(void *context, char *topicName, int topicLen, MQTTAsync_messag
     int8_t* data;
     uint32_t i;
     struct signal_emit* sig;
+    static uint32_t msg_counter = 0;
+    static uint32_t error_counter = 0;
+    static uint32_t up_counter = 0;
+
     
     struct timeval tv;
     gettimeofday(&tv, NULL);
     printf("%lu, Message arrived\n", tv.tv_sec*1000000+tv.tv_usec);
     printf("   topic: %s\n", topicName);
     printf("   message: %.*s\n", message->payloadlen, (char*)message->payload);   
+    msg_counter++;
    
    /* walk through other tokens */
    i = 0;
@@ -988,77 +1102,99 @@ int mqtt_msgarrvd(void *context, char *topicName, int topicLen, MQTTAsync_messag
    {
        i++;
        token[i] = strtok(NULL, s);       
-   }
-   
-
-   if (strcmp("error", token[5])==0)
+   }             
+   if (strcmp("downstreamtopic", token[0]) == 0)
    {
+        ///*
+        struct packet_generated_info pg;
+        pg.signature = (uint64_t)strtol(token[1], NULL, 16);
+        pg.labscim_time = gLabscimTime;           
+        schedule_for_downstream(&pg);
+        //*/
+        /*
+        struct signal_info si;
+        si.signature = (uint64_t)strtol(token[1], NULL, 16);
+        si.error = gLabscimTime;     
+        schedule_for_downstream(&si);
+        //*/
+   }   
+   else if (strcmp("error", token[5])==0)
+   {
+       error_counter++;
        root_val = json_parse_string_with_comments(message->payload);
        if (root_val != NULL)
        {
            obj = json_value_get_object(root_val);
            data = json_object_get_string(obj, "error");
            if (data != NULL)
-           {               
-               sig = (struct signal_emit *)malloc(sizeof(struct signal_emit));
-               sig->id = gPacketErrorSignal;
-               sig->value = data[0];
-               pthread_mutex_lock(&gEmitListMutex);
-               labscim_ll_insert_at_back(&gEmitSignalList, (void *)sig);
-               pthread_mutex_unlock(&gEmitListMutex);
+           {
+               struct signal_info si;
+               si.signature = (uint64_t)strtol(token[3], NULL, 16);
+               si.latency = NAN;
+               si.aoi_area = NAN;
+               si.aoi_max = NAN;
+               si.aoi_min = NAN;                              
+               si.error = (double)(*((uint64_t*)data));
+               schedule_for_emission(&si);               
            }
        }
    }
-
-   if(strcmp("up",token[5])==0)
+   //application/00000000-0000-0000-0000-000000000001/device/00000aaa00000003/event/up 
+   else if(strcmp("up",token[5])==0)
    {
+       up_counter++;
        root_val = json_parse_string_with_comments(message->payload);
        if (root_val != NULL)
        {
            obj = json_value_get_object(root_val);                                 
-           data = json_object_get_string(obj, "data");
-           if (data != NULL)
+           data = json_object_get_string(obj, "data");           
+           if (data != NULL && strlen(data) > 0)
            {               
                b64_to_bin(data, strlen(data), payload, 255);               
                uint64_t *values = (uint64_t *)payload;
-               sig = (struct signal_emit*)malloc(sizeof(struct signal_emit));
-               sig->id = gPacketLatencySignal;
-               sig->value = (gLabscimTime - values[1])/1e6;
-               pthread_mutex_lock(&gEmitListMutex);
-               labscim_ll_insert_at_back(&gEmitSignalList,(void*)sig);
-               pthread_mutex_unlock(&gEmitListMutex);
-               if (client != NULL)
+               if (gLabscimTime > values[0])
                {
-                  values[2] = gLabscimTime;
-                   bin_to_b64(payload, sizeof(uint64_t) * 3, enc_payload, 255);
-                   sprintf(payload, "{\"confirmed\": false, \"fPort\": 2, \"data\": \"%s\"}", enc_payload);
-                   opts.onSuccess = mqtt_onSend;
-                   opts.context = client;
-                   pubmsg.payload = payload;
-                   pubmsg.payloadlen = strlen(payload);
-                   pubmsg.qos = QOS;
-                   pubmsg.retained = 0;
-                   deliveredtoken = 0;
-                   //application/[ApplicationID]/device/[DevEUI]/command/down
-                //    sprintf(return_topic, "application/%s/%s/%s/command/down", token[1], token[2], token[3]);
-                //    if ((rc = MQTTAsync_sendMessage(client, return_topic, &pubmsg, &opts)) != MQTTASYNC_SUCCESS)
-                //    {
-                //        printf("Failed to start sendMessage, return code %d\n", rc);
-                //        exit(EXIT_FAILURE);
-                //    }
-                   sig = (struct signal_emit *)malloc(sizeof(struct signal_emit));
-                   sig->id = gPacketGeneratedSignal;
-                   sig->value = gLabscimTime / 1e6;
-                   pthread_mutex_lock(&gEmitListMutex);
-                   labscim_ll_insert_at_back(&gEmitSignalList, (void *)sig);
-                   pthread_mutex_unlock(&gEmitListMutex);
+                   uint32_t idx = strtol(token[3]+13,NULL, 16);
+                   struct signal_info si;
+                   si.signature = (uint64_t)strtol(token[3], NULL, 16);
+                   si.latency = (gLabscimTime - values[0]) / 1e6;
+                   if (idx < 256)
+                   {
+                        aoi(idx, payload,&si);
+                   }   
+                   si.error = 0;                
+                   schedule_for_emission(&si);
+
                }
+               
+            //    if (client != NULL)
+            //    {
+            //        values[0] = gLabscimTime;
+            //        bin_to_b64(payload, sizeof(uint64_t), enc_payload, 255);
+            //        sprintf(payload, "{\"confirmed\": false, \"fPort\": 2, \"data\": \"%s\"}", enc_payload);
+            //        opts.onSuccess = mqtt_onSend;
+            //        opts.context = client;
+            //        pubmsg.payload = payload;
+            //        pubmsg.payloadlen = strlen(payload);
+            //        pubmsg.qos = QOS;
+            //        pubmsg.retained = 0;
+            //        deliveredtoken = 0;
+            //        //application/[ApplicationID]/device/[DevEUI]/command/down
+            //        sprintf(return_topic, "application/%s/%s/%s/command/down", token[1], token[2], token[3]);
+            //         if ((rc = MQTTAsync_sendMessage(client, return_topic, &pubmsg, &opts)) != MQTTASYNC_SUCCESS)
+            //         {
+            //             printf("Failed to start sendMessage, return code %d\n", rc);
+            //             exit(EXIT_FAILURE);
+            //         }
+            //         schedule_for_downstream((uint64_t)strtol(token[3], NULL, 16));
+            //    }
            }
        }
    }
-    MQTTAsync_freeMessage(&message);
-    MQTTAsync_free(topicName);
-    return 1;
+   MQTTAsync_freeMessage(&message);
+   MQTTAsync_free(topicName);
+   printf("Msgs: %d, Errors: %d, Ups: %d\n", msg_counter, error_counter, up_counter);
+   return 1;
 }
 
 void mqtt_connlost(void *context, char *cause)
@@ -1093,7 +1229,25 @@ void mqtt_onDisconnect(void* context, MQTTAsync_successData* response)
 void mqtt_onSubscribe(void* context, MQTTAsync_successData* response)
 {
         printf("Subscribe succeeded\n");
-        subscribed = 1;
+        subscribed++;
+
+        if(subscribed==1)
+        {
+            MQTTAsync client = (MQTTAsync)context;
+            MQTTAsync_responseOptions opts = MQTTAsync_responseOptions_initializer;
+
+            int rc;
+
+            opts.onSuccess = mqtt_onSubscribe;
+            opts.onFailure = mqtt_onSubscribeFailure;
+            opts.context = client;
+            
+            if ((rc = MQTTAsync_subscribe(client, "downstreamtopic/#", QOS, &opts)) != MQTTASYNC_SUCCESS)
+            {
+                printf("Failed to start subscribe, return code %d\n", rc);
+                exit(EXIT_FAILURE);
+            }
+        }
 }
 
 void mqtt_onSubscribeFailure(void* context, MQTTAsync_failureData* response)
@@ -1112,11 +1266,24 @@ void thread_labscim_mqtt(void)
     MQTTAsync_token token;
     int rc;
 
+
+
+    pthread_mutex_lock(&gDownstreamListMutex);
+    labscim_ll_init_list(&gDownstreamSignalList);
+    pthread_mutex_unlock(&gDownstreamListMutex);
+
+
     pthread_mutex_lock(&gEmitListMutex);
     labscim_ll_init_list(&gEmitSignalList);
     pthread_mutex_unlock(&gEmitListMutex);
+    char client_id[64];
 
-    MQTTAsync_create(&client, gMQTTAddress, CLIENTID, MQTTCLIENT_PERSISTENCE_NONE, NULL);
+    strcpy(client_id,CLIENTID);
+    sprintf(client_id+strlen(client_id),"%d",getpid());
+
+
+
+    MQTTAsync_create(&client, gMQTTAddress, client_id, MQTTCLIENT_PERSISTENCE_NONE, NULL);
     MQTTAsync_setCallbacks(client, (void*)client, mqtt_connlost, mqtt_msgarrvd, NULL);     
 
     conn_opts.keepAliveInterval = 10;
@@ -1157,8 +1324,10 @@ exit:
 void labscim_interface_thread(void) 
 {
     uint64_t ret;
-    labscim_ll_init_list(&gReceivedPackets);    
-    
+    labscim_ll_init_list(&gReceivedPackets);
+
+
+
     while (!lib_exit_sig && !lib_quit_sig) 
     {     
         pthread_mutex_lock(gNodeInputBuffer->mutex.mutex);                
@@ -1220,8 +1389,8 @@ void labscim_radio_incoming_response(struct labscim_radio_response *cmd)
 
 void lgw_labscim_get_time(struct timeval *time)
 {
-    //struct timespec utc;
-    //lgw_gps_get(&utc, NULL, NULL, NULL);   
+    struct timespec utc;
+    lgw_gps_get(&utc, NULL, NULL, NULL);   
     //time->tv_sec = utc.tv_sec;
     //time->tv_usec = utc.tv_nsec/1000;
     time->tv_sec = gLabscimTime/1000000;
@@ -1307,6 +1476,8 @@ int lgw_start(uint8_t* NodeName, uint32_t BufferSize, uint64_t* GatewayMac)
         lgw_process_all_commands();
     }
     *GatewayMac = *((uint64_t*)mac_addr);   
+    gSignature = *((uint64_t*)mac_addr);   
+    
 
 
 
@@ -1321,14 +1492,19 @@ int lgw_start(uint8_t* NodeName, uint32_t BufferSize, uint64_t* GatewayMac)
 
     if (gCommandLabscimLog)
     {
-		gPacketGeneratedSignal = LabscimSignalRegister("LoRaDownstreamPacketGenerated");
-		gPacketLatencySignal = LabscimSignalRegister("LoRaUpstreamPacketLatency");
-        gPacketErrorSignal = LabscimSignalRegister("LoRaUpstreamPacketError");
+		gPacketLatencySignal = LabscimSignalRegister("LoRaDownstreamPacketLatency");
+        
+        gPacketReceivedSignal = LabscimSignalRegister("LoRaPacketReceived");	    
+        gDownstreamPacket = LabscimSignalRegister("LoRaDownstreamPacket");	  
+
+        gAoIMaxSignal = LabscimSignalRegister("LoRaDownstreamAoIMax");
+        gAoIMinSignal = LabscimSignalRegister("LoRaDownstreamAoIMin");
+        gAoIAreaSignal = LabscimSignalRegister("LoRaDownstreamAoIArea");
 
         i = pthread_create(&gThridMQTT, NULL, (void *(*)(void *))thread_labscim_mqtt, NULL);
         if (i != 0)
         {
-            DEBUG_MSG("ERROR: [main] impossible to labscim mqtt thread\n");
+            DEBUG_MSG("ERROR: [main] impossible to create labscim mqtt thread\n");
             exit(EXIT_FAILURE);
         }
     } 
@@ -1354,17 +1530,25 @@ int lgw_start(uint8_t* NodeName, uint32_t BufferSize, uint64_t* GatewayMac)
 
     //set channel and bandwidth - this has no practical effect since gateway radio always receive all packets, but this way, spectrum plotter plots the right listening window
     struct lora_set_frequency frequency_setup;    
-    frequency_setup.Frequency_Hz = (max_freq-min_freq)/2 + min_freq;
+    frequency_setup.Frequency_Hz = min_freq + 700000UL;
     radio_command(gNodeOutputBuffer, LORA_RADIO_SET_CHANNEL, (void *)&frequency_setup, sizeof(struct lora_set_frequency));
 
-    struct lora_set_modulation_params mp;
-    ModulationParams_t radio_setup;    
-    mp.TransmitPower_dBm = 27;
-    mp.ModulationParams.Params.LoRa.CodingRate = 1;
-    mp.ModulationParams.Params.LoRa.SpreadingFactor = 7;
-    radio_setup.Params.LoRa.Bandwidth = (max_freq-min_freq)+200000;
-    memcpy(&(mp.ModulationParams), &radio_setup, sizeof(ModulationParams_t));
+    struct lora_set_power sp;
+    sp.Power_dbm = 27;
+    radio_command(gNodeOutputBuffer, LORA_RADIO_SET_POWER, (void *)&sp, sizeof(struct lora_set_power));
+
+    struct lora_set_modulation_params mp;    
+    mp.ModulationParams.cr = 1;
+    mp.ModulationParams.sf = 7;
+    mp.ModulationParams.bw = 0;  //not used 
+    mp.ModulationParams.ldro = 0; //not used    
     radio_command(gNodeOutputBuffer, LORA_RADIO_SET_MODULATION_PARAMS, (void *)&mp, sizeof(struct lora_set_modulation_params));
+
+
+    struct lora_set_frequency lsf;    
+    lsf.Frequency_Hz = min_freq + 700000UL; 
+    radio_command(gNodeOutputBuffer, LORA_RADIO_SET_CHANNEL, (void *)&lsf, sizeof(struct lora_set_frequency));
+
 
     //set gateway to RX mode
     struct lora_set_rx srx;
@@ -1466,8 +1650,9 @@ int lgw_receive(uint8_t max_pkt, struct lgw_pkt_rx_s *pkt_data)
 
             /* get payload + metadata */
             //lgw_reg_rb(LGW_RX_DATA_BUF_DATA, buff, sz + RX_METADATA_NB);
-
+            
             /* process metadata  TODO: set the ifchain properly*/
+            bool FHSS = false;
             p->if_chain = 0xFF;
 
             for (int64_t i = 0; i < LGW_IF_CHAIN_NB; i++)
@@ -1477,6 +1662,16 @@ int lgw_receive(uint8_t max_pkt, struct lgw_pkt_rx_s *pkt_data)
                     p->if_chain = i;
                     break;
                 }
+            }
+
+            if(payload->HPW<0) //we are using this to detect FHSS packets
+            {
+                p->labscim_grid_size = -1;
+            }
+            else
+            {
+                p->labscim_grid_size = payload->HPW;
+                FHSS = true;
             }
 
             if (p->if_chain == 0xFF)
@@ -1495,7 +1690,14 @@ int lgw_receive(uint8_t max_pkt, struct lgw_pkt_rx_s *pkt_data)
                 //   DEBUG_PRINTF("WARNING: %u NOT A VALID IF_CHAIN NUMBER, ABORTING\n", p->if_chain);
                 //    break;
                 //}
-                ifmod = ifmod_config[p->if_chain];
+                if(!FHSS)
+                {
+                    ifmod = ifmod_config[p->if_chain];
+                }
+                else
+                {
+                    ifmod = IF_LABSCIM_FHSS;
+                }
                 //DEBUG_PRINTF("[%d %d]\n", p->if_chain, ifmod);
                 p->rf_chain = (uint8_t)if_rf_chain[p->if_chain];
                 p->freq_hz = (uint32_t)((int32_t)rf_rx_freq[p->rf_chain] + if_freq[p->if_chain]);
@@ -1508,7 +1710,7 @@ int lgw_receive(uint8_t max_pkt, struct lgw_pkt_rx_s *pkt_data)
                 {
                     p->status = STAT_CRC_OK;
                 }
-                if ((ifmod == IF_LORA_MULTI) || (ifmod == IF_LORA_STD))
+                if ((ifmod == IF_LORA_MULTI) || (ifmod == IF_LORA_STD)) 
                 {
                     DEBUG_MSG("Note: LoRa packet\n");
 
@@ -1577,9 +1779,22 @@ int lgw_receive(uint8_t max_pkt, struct lgw_pkt_rx_s *pkt_data)
                     p->datarate = fsk_rx_dr;
                     p->coderate = CR_UNDEFINED;
                 }
+                else if (ifmod == IF_LABSCIM_FHSS)
+                {
+                    DEBUG_MSG("Note: Labscim FHSS packet. Since no code was released, I got to be creative\n");
+
+                    p->modulation = MOD_LABSCIM_FHSS;
+                    p->snr = payload->SNR_db;
+                    p->snr_min = payload->SNR_db;
+                    p->snr_max = payload->SNR_db;
+                    p->bandwidth = payload->FHSSBW;
+                    p->datarate = DR_UNDEFINED;
+                    p->coderate = payload->FHSSCR;
+                }                
                 else
                 {
                     DEBUG_MSG("ERROR: UNEXPECTED PACKET ORIGIN\n");
+
                     p->status = STAT_UNDEFINED;
                     p->modulation = MOD_UNDEFINED;
                     p->rssi = -128.0;
@@ -1803,7 +2018,15 @@ int lgw_send(struct lgw_pkt_tx_s pkt_data)
         buff[6] = 0xFF & count_trig;
     }
 
-    msg->Tx_Delay_us = pkt_data.count_us-gLabscimTime;
+    if(pkt_data.count_us > (uint32_t)gLabscimTime)
+    {
+        msg->Tx_Delay_us = pkt_data.count_us-(uint32_t)gLabscimTime;
+    }
+    else
+    {
+        //pkt_data.count_us warped
+        msg->Tx_Delay_us = (0xFFFFFFFF - (uint32_t)gLabscimTime)+pkt_data.count_us;
+    }
     msg->CenterFrequency_Hz = pkt_data.freq_hz;
 
     /* parameters depending on modulation  */
@@ -2144,7 +2367,7 @@ int lgw_abort_tx(void)
 
 /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
-int lgw_get_trigcnt(uint32_t *trig_cnt_us)
+int lgw_get_trigcnt(uint64_t *trig_cnt_us)
 {
     //int i;
     //int32_t val;
@@ -2152,7 +2375,7 @@ int lgw_get_trigcnt(uint32_t *trig_cnt_us)
     //i = lgw_reg_r(LGW_TIMESTAMP, &val);
     //if (i == LGW_REG_SUCCESS)
     //{
-        *trig_cnt_us = (uint32_t)(gLabscimTime);
+        *trig_cnt_us = (uint64_t)(gLabscimTime);
         return LGW_HAL_SUCCESS;
     //}
     //else
@@ -2249,5 +2472,23 @@ uint32_t lgw_time_on_air(struct lgw_pkt_tx_s *packet)
 
     return Tpacket;
 }
+
+
+void labscim_signal_arrived(struct labscim_signal* sig)
+{
+	if (sig->signal_id == gPacketReceivedSignal)
+	{
+		struct signal_info* si = (struct signal_info*)(sig->signal);		
+		if (si->signature == gSignature)
+		{
+			LabscimSignalEmitDouble(gPacketLatencySignal, si->latency);						
+			LabscimSignalEmitDouble(gAoIMinSignal, si->aoi_min);
+			LabscimSignalEmitDouble(gAoIMaxSignal, si->aoi_max);
+			LabscimSignalEmitDouble(gAoIAreaSignal, si->aoi_area);
+		}
+	}
+	free(sig);
+}
+
 
 /* --- EOF ------------------------------------------------------------------ */

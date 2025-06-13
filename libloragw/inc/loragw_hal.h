@@ -56,6 +56,7 @@ Maintainer: Sylvain Miermont
 #define IF_LORA_STD         0x10    /* if + standard single-SF LoRa modem */
 #define IF_LORA_MULTI       0x11    /* if + LoRa receiver with multi-SF capability */
 #define IF_FSK_STD          0x20    /* if + standard FSK modem */
+#define IF_LABSCIM_FHSS     0x99    /* if + standard FSK modem */
 
 /* concentrator chipset-specific parameters */
 /* to use array parameters, declare a local const and use 'if_chain' as index */
@@ -81,6 +82,7 @@ Maintainer: Sylvain Miermont
 #define MOD_UNDEFINED   0
 #define MOD_LORA        0x10
 #define MOD_FSK         0x20
+#define MOD_LABSCIM_FHSS 0xAA
 
 /* values available for the 'bandwidth' parameters (LoRa & FSK) */
 /* NOTE: directly encode FSK RX bandwidth, do not change */
@@ -247,7 +249,8 @@ struct lgw_pkt_rx_s {
     float       snr_max;        /*!> maximum packet SNR, in dB (LoRa only) */
     uint16_t    crc;            /*!> CRC that was received in the payload */
     uint16_t    size;           /*!> payload size in bytes */
-    uint8_t     payload[256];   /*!> buffer containing the payload */
+    int8_t     labscim_grid_size; /*!> LR-FHSS hopping grid number of steps.*/
+    uint8_t     payload[256];   /*!> buffer containing the payload */    
 };
 
 /**
@@ -270,7 +273,7 @@ struct lgw_pkt_tx_s {
     bool        no_crc;         /*!> if true, do not send a CRC in the packet */
     bool        no_header;      /*!> if true, enable implicit header mode (LoRa), fixed length (FSK) */
     uint16_t    size;           /*!> payload size in bytes */
-    uint8_t     payload[256];   /*!> buffer containing the payload */
+    uint8_t     payload[256];   /*!> buffer containing the payload */    
 };
 
 /**
@@ -400,7 +403,7 @@ int lgw_abort_tx(void);
 @param trig_cnt_us pointer to receive timestamp value
 @return LGW_HAL_ERROR id the operation failed, LGW_HAL_SUCCESS else
 */
-int lgw_get_trigcnt(uint32_t* trig_cnt_us);
+int lgw_get_trigcnt(uint64_t* trig_cnt_us);
 
 /**
 @brief Allow user to check the version/options of the library once compiled

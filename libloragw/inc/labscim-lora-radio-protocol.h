@@ -1,1 +1,1 @@
-../../../LoRaMac-node/src/radio/labscim/labscim-lora-radio-protocol.h
+../../../LoRaMac-node/src/radio/labscim-lora-radio-protocol.h

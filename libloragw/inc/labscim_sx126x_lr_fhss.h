@@ -1,0 +1,1 @@
+../../../LoRaMac-node/src/radio/labscim_sx126x_driver/src/labscim_sx126x_lr_fhss.h

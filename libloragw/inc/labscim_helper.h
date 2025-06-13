@@ -18,7 +18,9 @@ struct signal_emit
 
 uint64_t LabscimSignalRegister(uint8_t* signal_name);
 
-void LabscimSignalEmit(uint64_t id, double value);
+void LabscimSignalEmitDouble(uint64_t id, double value);
+void LabscimSignalEmitChar(uint64_t id, char* value, uint64_t size);
+void LabscimSignalSubscribe(uint64_t id);
 
 
 #endif /* EXAMPLES_6TISCH_SIMPLE_NODE_LABSCIM_HELPER_H_ */
