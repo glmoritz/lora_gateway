@@ -7,6 +7,7 @@
         "omnet_radio_mode.h": "c",
         "signal.h": "c",
         "loragw_reg.h": "c",
-        "labscim_helper.h": "c"
+        "labscim_helper.h": "c",
+        "random": "c"
     }
 }

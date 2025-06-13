@@ -77,7 +77,6 @@ extern uint8_t gMQTTTopic[128];
 #define QOS         1
 #define TIMEOUT     10000L
 
-uint64_t gPacketGeneratedSignal;
 uint64_t gPacketLatencySignal;
 uint64_t gPacketErrorSignal;
 uint64_t gPacketReceivedSignal;
@@ -90,9 +89,14 @@ struct signal_info
 	double latency;
 	double aoi_max;
 	double aoi_min;
-	double aoi_area;
+	double aoi_area;    
 } __attribute__((packed));
 
+struct packet_generated_info
+{
+	uint64_t signature;	
+    uint64_t labscim_time;	
+} __attribute__((packed));
 
 pthread_mutex_t gEmitListMutex = PTHREAD_MUTEX_INITIALIZER;
 struct labscim_ll gEmitSignalList;
@@ -100,10 +104,7 @@ struct labscim_ll gEmitSignalList;
 pthread_mutex_t gDownstreamListMutex = PTHREAD_MUTEX_INITIALIZER;
 struct labscim_ll gDownstreamSignalList;
 
-
 uint64_t gSignature=0;
-
-
 
 
 volatile bool lib_exit_sig = false; /* 1 -> application terminates cleanly (shut down hardware, close open files, etc) */
@@ -262,26 +263,42 @@ int32_t lgw_bw_getval(int x);
 void EmitAndYield()
 {
     struct signal_info *si;
-    uint64_t* signature;
+    struct packet_generated_info* pg;
     pthread_mutex_lock(&gEmitListMutex);
     si = (struct signal_info *)labscim_ll_pop_front(&gEmitSignalList);
     while (si != NULL)
     {
         LabscimSignalEmitChar(gPacketReceivedSignal, (char *)si, sizeof(struct signal_info));
+        //LabscimSignalEmitChar(gDownstreamPacket, (char *)si, sizeof(struct signal_info));
         free(si);
         si = (struct signal_info *)labscim_ll_pop_front(&gEmitSignalList);
     }
     pthread_mutex_unlock(&gEmitListMutex);
+    
+    //*
     pthread_mutex_lock(&gDownstreamListMutex);
-    signature = (uint64_t *)labscim_ll_pop_front(&gDownstreamSignalList);
-    while (signature != NULL)
+    pg = (struct packet_generated_info *)labscim_ll_pop_front(&gDownstreamSignalList);
+    while (pg != NULL)
     {
-        LabscimSignalEmitChar(gDownstreamPacket, (char *)signature, sizeof(uint64_t));
-        free(signature);
-        signature = (uint64_t *)labscim_ll_pop_front(&gDownstreamSignalList);
+        LabscimSignalEmitChar(gDownstreamPacket, (char *)pg, sizeof(struct packet_generated_info));
+        free(pg);
+        pg = (struct packet_generated_info *)labscim_ll_pop_front(&gDownstreamSignalList);
     }
     pthread_mutex_unlock(&gDownstreamListMutex);
     protocol_yield(gNodeOutputBuffer);
+    //*/
+    /*
+    pthread_mutex_lock(&gDownstreamListMutex);
+    si = (struct signal_info *)labscim_ll_pop_front(&gDownstreamSignalList);
+    while (si != NULL)
+    {
+        LabscimSignalEmitChar(gDownstreamPacket, (char *)si, sizeof(struct signal_info));
+        free(si);
+        si = (struct signal_info *)labscim_ll_pop_front(&gDownstreamSignalList);
+    }
+    pthread_mutex_unlock(&gDownstreamListMutex);
+    protocol_yield(gNodeOutputBuffer);
+    */
 }
 
 /* size is the firmware size in bytes (not 14b words) */
@@ -983,14 +1000,25 @@ void mqtt_onSend(void* context, MQTTAsync_successData* response)
     printf("Message with token value %d delivery confirmed\n", response->token);
 }
 
-void schedule_for_downstream(uint64_t signature)
+void schedule_for_downstream(struct packet_generated_info* pg)
+//void schedule_for_downstream(struct signal_info* si)
 {
-    uint64_t* sig;
-    sig = (uint64_t *)malloc(sizeof(uint64_t));
-    *sig = signature;
+    ///*
+    struct packet_generated_info* pg_new;
+    pg_new = (struct packet_generated_info*)malloc(sizeof(struct packet_generated_info));
+    memcpy(pg_new, pg, sizeof(struct packet_generated_info));
+    pthread_mutex_lock(&gDownstreamListMutex);
+    labscim_ll_insert_at_back(&gDownstreamSignalList, (void *)pg_new);
+    pthread_mutex_unlock(&gDownstreamListMutex);
+    //*/
+    /*
+    struct signal_info* sig;
+    sig = (struct signal_info *)malloc(sizeof(struct signal_info));
+    memcpy(sig, si, sizeof(struct signal_info));
     pthread_mutex_lock(&gDownstreamListMutex);
     labscim_ll_insert_at_back(&gDownstreamSignalList, (void *)sig);
     pthread_mutex_unlock(&gDownstreamListMutex);
+    */
 }
 
 void schedule_for_emission(struct signal_info* si)
@@ -1074,33 +1102,22 @@ int mqtt_msgarrvd(void *context, char *topicName, int topicLen, MQTTAsync_messag
    {
        i++;
        token[i] = strtok(NULL, s);       
-   }
-   
+   }             
    if (strcmp("downstreamtopic", token[0]) == 0)
    {
-       uint64_t v;
-       uint8_t dev_id[64];
-       memset(dev_id,0,64);
-       v = gLabscimTime;
-       bin_to_b64((uint8_t*)&v, sizeof(uint64_t), enc_payload, 255);
-       sprintf(payload, "{\"confirmed\": false, \"fPort\": 2, \"data\": \"%s\"}", enc_payload);
-       opts.onSuccess = mqtt_onSend;
-       opts.context = client;
-       pubmsg.payload = payload;
-       pubmsg.payloadlen = strlen(payload);
-       pubmsg.qos = QOS;
-       pubmsg.retained = 0;
-       deliveredtoken = 0;
-       // application/[ApplicationID]/device/[DevEUI]/command/down
-       memcpy(dev_id,message->payload,message->payloadlen);
-       sprintf(return_topic, "application/%s/%s/%s/command/down", "1", "device", dev_id);
-       if ((rc = MQTTAsync_sendMessage(client, return_topic, &pubmsg, &opts)) != MQTTASYNC_SUCCESS)
-       {
-           printf("Failed to start sendMessage, return code %d\n", rc);
-           exit(EXIT_FAILURE);
-       }
-       schedule_for_downstream((uint64_t)strtol((char*)dev_id, NULL, 16));
-   }
+        ///*
+        struct packet_generated_info pg;
+        pg.signature = (uint64_t)strtol(token[1], NULL, 16);
+        pg.labscim_time = gLabscimTime;           
+        schedule_for_downstream(&pg);
+        //*/
+        /*
+        struct signal_info si;
+        si.signature = (uint64_t)strtol(token[1], NULL, 16);
+        si.error = gLabscimTime;     
+        schedule_for_downstream(&si);
+        //*/
+   }   
    else if (strcmp("error", token[5])==0)
    {
        error_counter++;
@@ -1122,6 +1139,7 @@ int mqtt_msgarrvd(void *context, char *topicName, int topicLen, MQTTAsync_messag
            }
        }
    }
+   //application/00000000-0000-0000-0000-000000000001/device/00000aaa00000003/event/up 
    else if(strcmp("up",token[5])==0)
    {
        up_counter++;
@@ -1129,8 +1147,8 @@ int mqtt_msgarrvd(void *context, char *topicName, int topicLen, MQTTAsync_messag
        if (root_val != NULL)
        {
            obj = json_value_get_object(root_val);                                 
-           data = json_object_get_string(obj, "data");
-           if (data != NULL)
+           data = json_object_get_string(obj, "data");           
+           if (data != NULL && strlen(data) > 0)
            {               
                b64_to_bin(data, strlen(data), payload, 255);               
                uint64_t *values = (uint64_t *)payload;
@@ -1142,10 +1160,11 @@ int mqtt_msgarrvd(void *context, char *topicName, int topicLen, MQTTAsync_messag
                    si.latency = (gLabscimTime - values[0]) / 1e6;
                    if (idx < 256)
                    {
-                       aoi(idx, payload,&si);
+                        aoi(idx, payload,&si);
                    }   
                    si.error = 0;                
                    schedule_for_emission(&si);
+
                }
                
             //    if (client != NULL)
@@ -1223,7 +1242,7 @@ void mqtt_onSubscribe(void* context, MQTTAsync_successData* response)
             opts.onFailure = mqtt_onSubscribeFailure;
             opts.context = client;
             
-            if ((rc = MQTTAsync_subscribe(client, "downstreamtopic", QOS, &opts)) != MQTTASYNC_SUCCESS)
+            if ((rc = MQTTAsync_subscribe(client, "downstreamtopic/#", QOS, &opts)) != MQTTASYNC_SUCCESS)
             {
                 printf("Failed to start subscribe, return code %d\n", rc);
                 exit(EXIT_FAILURE);
@@ -1246,6 +1265,13 @@ void thread_labscim_mqtt(void)
     MQTTAsync_disconnectOptions disc_opts = MQTTAsync_disconnectOptions_initializer;
     MQTTAsync_token token;
     int rc;
+
+
+
+    pthread_mutex_lock(&gDownstreamListMutex);
+    labscim_ll_init_list(&gDownstreamSignalList);
+    pthread_mutex_unlock(&gDownstreamListMutex);
+
 
     pthread_mutex_lock(&gEmitListMutex);
     labscim_ll_init_list(&gEmitSignalList);
@@ -1466,11 +1492,10 @@ int lgw_start(uint8_t* NodeName, uint32_t BufferSize, uint64_t* GatewayMac)
 
     if (gCommandLabscimLog)
     {
-		gPacketGeneratedSignal = LabscimSignalRegister("LoRaDownstreamPacketGenerated");
 		gPacketLatencySignal = LabscimSignalRegister("LoRaDownstreamPacketLatency");
         
         gPacketReceivedSignal = LabscimSignalRegister("LoRaPacketReceived");	    
-        gDownstreamPacket = LabscimSignalRegister("LoRaDownstreamPacket");	    
+        gDownstreamPacket = LabscimSignalRegister("LoRaDownstreamPacket");	  
 
         gAoIMaxSignal = LabscimSignalRegister("LoRaDownstreamAoIMax");
         gAoIMinSignal = LabscimSignalRegister("LoRaDownstreamAoIMin");
