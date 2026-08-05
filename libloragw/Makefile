@@ -13,6 +13,17 @@ AR := $(CROSS_COMPILE)ar
 #CFLAGS := -O0 -DIS_LABSCIM_CLIENT -DLABSCIM_LOG_COMMANDS -g -Wall -Wextra -std=c99 -Iinc -I.
 CFLAGS := -O0 -DIS_LABSCIM_CLIENT -g -Wall -Wextra -std=c99 -Iinc -I.
 
+# GCC 14 promoted five C99 diagnostics that had always been warnings to errors
+# by default (implicit-function-declaration, implicit-int, int-conversion,
+# incompatible-pointer-types, return-mismatch). -fpermissive downgrades all
+# five back to warnings, keeping the GCC <= 13 behaviour. Needed to build on
+# Ubuntu 24.04 and later; older GCC does not accept the flag for C, hence the
+# version test.
+GCC_MAJOR := $(shell $(CC) -dumpversion 2>/dev/null | cut -d. -f1)
+ifeq ($(shell test "$(GCC_MAJOR)" -ge 14 2>/dev/null && echo yes),yes)
+CFLAGS += -fpermissive
+endif
+
 OBJDIR = obj
 INCLUDES = $(wildcard inc/*.h)
 
